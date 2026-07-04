@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  startRegistration,
+  startAuthentication,
+} from "@simplewebauthn/browser";
 
 type Links = Record<string, string>;
 
@@ -11,23 +15,50 @@ function shortHost() {
   return "carolanne.link";
 }
 
+// A friendly label for the passkey we're about to create, based on the device.
+function deviceLabel() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/iphone/i.test(ua)) return "iPhone";
+  if (/ipad/i.test(ua)) return "iPad";
+  if (/android/i.test(ua)) return "Android phone";
+  if (/mac/i.test(ua)) return "Mac";
+  if (/windows/i.test(ua)) return "Windows PC";
+  return "This device";
+}
+
+// Turn WebAuthn/browser errors into something readable. Cancelling Touch ID
+// throws a NotAllowedError, which we don't want to show raw.
+function friendly(err: unknown): string {
+  const e = err as { name?: string; message?: string };
+  if (e?.name === "NotAllowedError") return "Cancelled or timed out.";
+  return e?.message ?? "Something went wrong.";
+}
+
 export default function Admin() {
+  const [booting, setBooting] = useState(true);
   const [password, setPassword] = useState("");
   const [unlocked, setUnlocked] = useState(false);
+  const [hasPasskey, setHasPasskey] = useState(false);
   const [links, setLinks] = useState<Links>({});
   const [slug, setSlug] = useState("");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
-  // Wrapper around fetch that always sends the password header and surfaces
-  // a friendly error message.
+  // Only send the password header when we actually have a password typed in;
+  // otherwise the session cookie does the authenticating.
+  function authHeaders(): Record<string, string> {
+    return password ? { "x-admin-password": password } : {};
+  }
+
+  // Wrapper around the links API that surfaces a friendly error message.
   async function api(method: string, body?: unknown) {
     const res = await fetch("/api/links", {
       method,
       headers: {
         "content-type": "application/json",
-        "x-admin-password": password,
+        ...authHeaders(),
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -36,17 +67,119 @@ export default function Admin() {
     return data;
   }
 
-  async function unlock(e: React.FormEvent) {
+  async function loadLinks() {
+    const { links } = await api("GET");
+    setLinks(links ?? {});
+    setUnlocked(true);
+  }
+
+  // On load, ask the server whether a passkey exists and whether we're already
+  // signed in (via a session cookie from a previous visit).
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/status");
+        const data = await res.json().catch(() => ({}));
+        setHasPasskey(Boolean(data.hasPasskey));
+        if (data.authenticated) await loadLinks();
+      } catch {
+        // Ignore — the user can still unlock manually.
+      } finally {
+        setBooting(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function unlockWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
-      const { links } = await api("GET");
-      setLinks(links ?? {});
-      setUnlocked(true);
+      await loadLinks();
     } catch (err) {
       setError((err as Error).message);
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlockWithTouchID() {
+    setError("");
+    setBusy(true);
+    try {
+      const optRes = await fetch("/api/auth/login-options", { method: "POST" });
+      const optData = await optRes.json();
+      if (!optRes.ok) throw new Error(optData.error ?? "Couldn't start login.");
+
+      const assertion = await startAuthentication({ optionsJSON: optData.options });
+
+      const verRes = await fetch("/api/auth/login-verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flowId: optData.flowId, response: assertion }),
+      });
+      const verData = await verRes.json();
+      if (!verRes.ok || !verData.verified) {
+        throw new Error(verData.error ?? "Passkey login failed.");
+      }
+
+      await loadLinks(); // session cookie is now set
+    } catch (err) {
+      setError(friendly(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setupTouchID() {
+    setError("");
+    setInfo("");
+    setBusy(true);
+    try {
+      const optRes = await fetch("/api/auth/register-options", {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const optData = await optRes.json();
+      if (!optRes.ok) throw new Error(optData.error ?? "Couldn't start setup.");
+
+      const attestation = await startRegistration({ optionsJSON: optData.options });
+
+      const verRes = await fetch("/api/auth/register-verify", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          flowId: optData.flowId,
+          response: attestation,
+          label: deviceLabel(),
+        }),
+      });
+      const verData = await verRes.json();
+      if (!verRes.ok || !verData.verified) {
+        throw new Error(verData.error ?? "Passkey setup failed.");
+      }
+
+      setHasPasskey(true);
+      setInfo("Touch ID is set up on this device. You can use it to unlock next time.");
+    } catch (err) {
+      setError(friendly(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    setBusy(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Best effort.
+    } finally {
+      setUnlocked(false);
+      setPassword("");
+      setLinks({});
+      setInfo("");
       setBusy(false);
     }
   }
@@ -91,26 +224,75 @@ export default function Admin() {
   return (
     <main style={S.page}>
       <div style={S.card}>
-        <h1 style={S.h1}>carolanne.link</h1>
-
-        {!unlocked ? (
-          <form onSubmit={unlock} style={S.form}>
-            <label style={S.label}>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoFocus
-                style={S.input}
-              />
-            </label>
-            <button type="submit" disabled={busy || !password} style={S.primary}>
-              {busy ? "Checking…" : "Unlock"}
+        <div style={S.header}>
+          <h1 style={S.h1}>carolanne.link</h1>
+          {unlocked && (
+            <button onClick={logout} disabled={busy} style={S.textBtn}>
+              Log out
             </button>
-          </form>
+          )}
+        </div>
+
+        {booting ? (
+          <p style={S.muted}>Loading…</p>
+        ) : !unlocked ? (
+          <div style={S.form}>
+            {hasPasskey && (
+              <>
+                <button
+                  type="button"
+                  onClick={unlockWithTouchID}
+                  disabled={busy}
+                  style={S.primary}
+                >
+                  {busy ? "Waiting for Touch ID…" : "🔓 Unlock with Touch ID"}
+                </button>
+                <div style={S.divider}>
+                  <span style={S.dividerText}>or use your password</span>
+                </div>
+              </>
+            )}
+
+            <form onSubmit={unlockWithPassword} style={S.form}>
+              <label style={S.label}>
+                Password
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoFocus={!hasPasskey}
+                  style={S.input}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busy || !password}
+                style={hasPasskey ? S.secondary : S.primary}
+              >
+                {busy ? "Checking…" : "Unlock"}
+              </button>
+            </form>
+          </div>
         ) : (
           <>
+            <div style={S.passkeyBar}>
+              <span style={S.muted}>
+                {hasPasskey
+                  ? "Touch ID is available on registered devices."
+                  : "Skip the password next time:"}
+              </span>
+              <button
+                type="button"
+                onClick={setupTouchID}
+                disabled={busy}
+                style={S.secondary}
+              >
+                {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
+              </button>
+            </div>
+
+            <hr style={S.hr} />
+
             <form onSubmit={addLink} style={S.form}>
               <label style={S.label}>
                 Destination URL
@@ -181,6 +363,7 @@ export default function Admin() {
           </>
         )}
 
+        {info && <p style={S.info}>{info}</p>}
         {error && <p style={S.error}>{error}</p>}
       </div>
     </main>
@@ -195,7 +378,13 @@ const S: Record<string, React.CSSProperties> = {
     padding: "min(8vh, 4rem) 1rem",
   },
   card: { width: "100%", maxWidth: 560 },
-  h1: { fontSize: "1.5rem", fontWeight: 600, margin: "0 0 1.5rem" },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    margin: "0 0 1.5rem",
+  },
+  h1: { fontSize: "1.5rem", fontWeight: 600, margin: 0 },
   form: { display: "grid", gap: "1rem" },
   label: {
     display: "grid",
@@ -235,6 +424,44 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     cursor: "pointer",
   },
+  secondary: {
+    padding: ".55rem .9rem",
+    fontSize: ".9rem",
+    fontWeight: 600,
+    color: "var(--fg)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  textBtn: {
+    padding: ".3rem .5rem",
+    fontSize: ".85rem",
+    color: "var(--muted)",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+  },
+  divider: {
+    display: "grid",
+    placeItems: "center",
+    position: "relative",
+    margin: ".25rem 0",
+  },
+  dividerText: {
+    fontSize: ".8rem",
+    color: "var(--muted)",
+    background: "var(--bg, #000)",
+    padding: "0 .6rem",
+  },
+  passkeyBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: ".75rem",
+    flexWrap: "wrap",
+    fontSize: ".85rem",
+  },
   hr: { border: "none", borderTop: "1px solid var(--border)", margin: "1.5rem 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".5rem" },
   item: {
@@ -265,6 +492,14 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   muted: { color: "var(--muted)" },
+  info: {
+    marginTop: "1rem",
+    padding: ".6rem .75rem",
+    fontSize: ".9rem",
+    color: "var(--accent)",
+    border: "1px solid var(--accent)",
+    borderRadius: 8,
+  },
   error: {
     marginTop: "1rem",
     padding: ".6rem .75rem",
