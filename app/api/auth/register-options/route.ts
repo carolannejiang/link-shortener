@@ -32,6 +32,10 @@ export async function POST(req: NextRequest) {
       transports: c.transports as never,
     })),
     authenticatorSelection: {
+      // "platform" = the device's own built-in authenticator (Touch ID on a
+      // Mac, Face ID / fingerprint on a phone) instead of the cross-device
+      // "use your phone or tablet" QR flow.
+      authenticatorAttachment: "platform",
       residentKey: "preferred",
       userVerification: "preferred",
     },
