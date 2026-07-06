@@ -1,18 +1,136 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   startRegistration,
   startAuthentication,
 } from "@simplewebauthn/browser";
 
-type Links = Record<string, string>;
+type Link = { url: string; clicks: number; scans: number; disabled: boolean };
+type Links = Record<string, Link>;
+
+type Hit = {
+  t: number;
+  src: "qr" | "direct";
+  device: string;
+  os: string;
+  browser: string;
+  ref?: string;
+  country?: string;
+  city?: string;
+};
 
 // The short-link domain, used only to render previews like carolanne.link/career.
 // Falls back to whatever host the admin page is loaded from.
 function shortHost() {
   if (typeof window !== "undefined") return window.location.host;
   return "carolanne.link";
+}
+
+// The full origin (scheme + host) used to build absolute QR-code URLs.
+function shortOrigin() {
+  if (typeof window !== "undefined") return window.location.origin;
+  return "https://carolanne.link";
+}
+
+// The value a link's QR code encodes: the absolute short URL, tagged with
+// ?src=qr so the proxy can count scans separately from ordinary clicks.
+function qrValue(slug: string) {
+  return `${shortOrigin()}/${slug}?src=qr`;
+}
+
+// A QR code for one link, with a button to download it as an SVG for printing.
+function QrBlock({ slug }: { slug: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  function download() {
+    const svg = ref.current?.querySelector("svg");
+    if (!svg) return;
+    const data = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([data], { type: "image/svg+xml" });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = `${slug}-qr.svg`;
+    a.click();
+    URL.revokeObjectURL(href);
+  }
+
+  return (
+    <div style={S.qrBlock}>
+      <div ref={ref} style={S.qrCanvas}>
+        <QRCodeSVG value={qrValue(slug)} size={148} marginSize={2} />
+      </div>
+      <button type="button" onClick={download} style={S.secondaryBtn}>
+        Download SVG
+      </button>
+    </div>
+  );
+}
+
+// Format a hit timestamp compactly, e.g. "Jul 6, 2:04 PM".
+function fmtTime(t: number): string {
+  return new Date(t).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+// Count hits by one field, biggest first: [["mobile", 12], ["desktop", 3]].
+function tally(hits: Hit[], key: keyof Hit): [string, number][] {
+  const counts: Record<string, number> = {};
+  for (const h of hits) {
+    const v = String(h[key] ?? "unknown");
+    counts[v] = (counts[v] ?? 0) + 1;
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+}
+
+function place(h: Hit): string {
+  return [h.city, h.country].filter(Boolean).join(", ");
+}
+
+// The expandable analytics panel for one link: a few breakdowns plus a list of
+// the most recent hits.
+function StatsBlock({ hits }: { hits: Hit[] | undefined }) {
+  if (hits === undefined) return <div style={S.statsBlock}>Loading…</div>;
+  if (hits.length === 0)
+    return <div style={S.statsBlock}>No visits recorded yet.</div>;
+
+  const devices = tally(hits, "device");
+
+  return (
+    <div style={S.statsBlock}>
+      <div style={S.chips}>
+        {devices.map(([name, n]) => (
+          <span key={name} style={S.chip}>
+            {name} {n}
+          </span>
+        ))}
+      </div>
+      <div style={S.hitList}>
+        {hits.slice(0, 25).map((h, i) => (
+          <div key={i} style={S.hitRow}>
+            <span style={S.hitTime}>{fmtTime(h.t)}</span>
+            <span>
+              {h.device} · {h.os} · {h.browser}
+            </span>
+            <span style={S.hitMeta}>
+              {[place(h), h.ref, h.src === "qr" ? "QR" : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </div>
+        ))}
+      </div>
+      {hits.length > 25 && (
+        <div style={S.hitMeta}>Showing 25 of {hits.length} recent hits.</div>
+      )}
+    </div>
+  );
 }
 
 // A friendly label for the passkey we're about to create, based on the device.
@@ -45,6 +163,9 @@ export default function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [qrFor, setQrFor] = useState<string | null>(null);
+  const [statsFor, setStatsFor] = useState<string | null>(null);
+  const [statsData, setStatsData] = useState<Record<string, Hit[]>>({});
 
   // Only send the password header when we actually have a password typed in;
   // otherwise the session cookie does the authenticating.
@@ -190,9 +311,54 @@ export default function Admin() {
     setBusy(true);
     try {
       const data = await api("POST", { slug, url });
-      setLinks((prev) => ({ ...prev, [data.slug]: data.url }));
+      setLinks((prev) => ({
+        ...prev,
+        [data.slug]: {
+          url: data.url,
+          clicks: prev[data.slug]?.clicks ?? 0,
+          scans: prev[data.slug]?.scans ?? 0,
+          disabled: false,
+        },
+      }));
       setSlug("");
       setUrl("");
+      setQrFor(data.slug); // reveal the QR code for the link we just made
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Toggle the analytics panel for a link, lazily fetching its hit log the
+  // first time it's opened.
+  async function toggleStats(s: string) {
+    if (statsFor === s) {
+      setStatsFor(null);
+      return;
+    }
+    setStatsFor(s);
+    if (statsData[s]) return; // already loaded
+    try {
+      const res = await fetch(`/api/links?stats=${encodeURIComponent(s)}`, {
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const hits: Hit[] = (data.events ?? []).filter(Boolean);
+        setStatsData((prev) => ({ ...prev, [s]: hits }));
+      }
+    } catch {
+      // Leave it in the loading state; the user can retry by toggling.
+    }
+  }
+
+  async function toggleLink(s: string, disabled: boolean) {
+    setError("");
+    setBusy(true);
+    try {
+      await api("PATCH", { slug: s, disabled });
+      setLinks((prev) => ({ ...prev, [s]: { ...prev[s], disabled } }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -297,9 +463,9 @@ export default function Admin() {
               <label style={S.label}>
                 Destination URL
                 <input
-                  type="url"
+                  type="text"
                   inputMode="url"
-                  placeholder="https://example.com/a/very/long/url"
+                  placeholder="example.com/a/very/long/url"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   style={S.input}
@@ -307,22 +473,21 @@ export default function Admin() {
                 />
               </label>
               <label style={S.label}>
-                Short name
+                Short name (optional)
                 <div style={S.slugRow}>
                   <span style={S.slugPrefix}>{host}/</span>
                   <input
                     type="text"
-                    placeholder="career"
+                    placeholder="leave blank for a random one"
                     value={slug}
                     onChange={(e) =>
                       setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
                     }
                     style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
-                    required
                   />
                 </div>
               </label>
-              <button type="submit" disabled={busy || !slug || !url} style={S.primary}>
+              <button type="submit" disabled={busy || !url} style={S.primary}>
                 {busy ? "Saving…" : "Save link"}
               </button>
             </form>
@@ -334,28 +499,68 @@ export default function Admin() {
             ) : (
               <ul style={S.list}>
                 {entries.map(([s, u]) => (
-                  <li key={s} style={S.item}>
+                  <li
+                    key={s}
+                    style={{ ...S.item, opacity: u.disabled ? 0.55 : 1 }}
+                  >
+                    <div style={S.itemRow}>
                     <div style={{ minWidth: 0 }}>
-                      <a
-                        href={`/${s}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={S.shortLink}
-                      >
-                        {host}/{s}
-                      </a>
-                      <div style={S.dest} title={u}>
-                        → {u}
+                      <div style={S.shortLinkRow}>
+                        <a
+                          href={`/${s}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={S.shortLink}
+                        >
+                          {host}/{s}
+                        </a>
+                        <span style={S.clicks}>
+                          {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
+                          {u.scans > 0 && ` · ${u.scans} scan${u.scans === 1 ? "" : "s"}`}
+                        </span>
+                        {u.disabled && <span style={S.disabledTag}>disabled</span>}
+                      </div>
+                      <div style={S.dest} title={u.url}>
+                        → {u.url}
                       </div>
                     </div>
-                    <button
-                      onClick={() => removeLink(s)}
-                      disabled={busy}
-                      style={S.delete}
-                      aria-label={`Delete ${s}`}
-                    >
-                      Delete
-                    </button>
+                    <div style={S.actions}>
+                      <button
+                        onClick={() => toggleStats(s)}
+                        disabled={busy}
+                        style={S.secondaryBtn}
+                        aria-label={`${statsFor === s ? "Hide" : "Show"} stats for ${s}`}
+                      >
+                        {statsFor === s ? "Hide stats" : "Stats"}
+                      </button>
+                      <button
+                        onClick={() => setQrFor((cur) => (cur === s ? null : s))}
+                        disabled={busy}
+                        style={S.secondaryBtn}
+                        aria-label={`${qrFor === s ? "Hide" : "Show"} QR code for ${s}`}
+                      >
+                        {qrFor === s ? "Hide QR" : "QR"}
+                      </button>
+                      <button
+                        onClick={() => toggleLink(s, !u.disabled)}
+                        disabled={busy}
+                        style={S.secondaryBtn}
+                        aria-label={`${u.disabled ? "Enable" : "Disable"} ${s}`}
+                      >
+                        {u.disabled ? "Enable" : "Disable"}
+                      </button>
+                      <button
+                        onClick={() => removeLink(s)}
+                        disabled={busy}
+                        style={S.delete}
+                        aria-label={`Delete ${s}`}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    </div>
+                    {statsFor === s && <StatsBlock hits={statsData[s]} />}
+                    {qrFor === s && <QrBlock slug={s} />}
                   </li>
                 ))}
               </ul>
@@ -466,14 +671,89 @@ const S: Record<string, React.CSSProperties> = {
   list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".5rem" },
   item: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "column",
     gap: ".75rem",
     padding: ".6rem .75rem",
     border: "1px solid var(--border)",
     borderRadius: 8,
   },
+  itemRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: ".75rem",
+  },
+  qrBlock: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: ".6rem",
+    paddingTop: ".25rem",
+  },
+  qrCanvas: {
+    padding: ".6rem",
+    background: "#fff",
+    borderRadius: 8,
+    lineHeight: 0,
+  },
+  statsBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: ".6rem",
+    paddingTop: ".25rem",
+    fontSize: ".8rem",
+    color: "var(--muted)",
+  },
+  chips: { display: "flex", flexWrap: "wrap", gap: ".35rem" },
+  chip: {
+    padding: ".15rem .5rem",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 999,
+    fontSize: ".75rem",
+    color: "var(--fg)",
+  },
+  hitList: { display: "grid", gap: ".25rem" },
+  hitRow: {
+    display: "grid",
+    gap: ".1rem",
+    padding: ".35rem 0",
+    borderTop: "1px solid var(--border)",
+  },
+  hitTime: { color: "var(--fg)", fontWeight: 600 },
+  hitMeta: { fontSize: ".75rem", color: "var(--muted)" },
+  shortLinkRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: ".5rem",
+    flexWrap: "wrap",
+  },
   shortLink: { fontWeight: 600, textDecoration: "none" },
+  clicks: {
+    fontSize: ".75rem",
+    color: "var(--muted)",
+    whiteSpace: "nowrap",
+  },
+  disabledTag: {
+    fontSize: ".7rem",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: ".03em",
+    color: "var(--danger)",
+    border: "1px solid var(--danger)",
+    borderRadius: 4,
+    padding: "0 .35rem",
+  },
+  actions: { display: "flex", gap: ".4rem", flexShrink: 0 },
+  secondaryBtn: {
+    padding: ".4rem .6rem",
+    fontSize: ".8rem",
+    color: "var(--fg)",
+    background: "transparent",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    cursor: "pointer",
+  },
   dest: {
     fontSize: ".8rem",
     color: "var(--muted)",

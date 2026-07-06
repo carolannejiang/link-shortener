@@ -10,8 +10,9 @@ export default function Home() {
         padding: "2rem",
       }}
     >
-      <p style={{ color: "var(--muted)" }}>
-        Nothing here. <a href="/admin">Admin</a>
+      <p style={{ color: "var(--muted)", textAlign: "center", maxWidth: "28rem" }}>
+        There is nothing here. If you were looking for a link, contact
+        Carolanne. <a href="/admin">Admin</a>
       </p>
     </main>
   );
