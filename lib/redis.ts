@@ -18,3 +18,22 @@ export const redis = new Redis({ url, token });
 
 // Every link is one field in a single Redis hash: field = slug, value = URL.
 export const LINKS_KEY = "links";
+
+// Click counters, kept in a parallel hash: field = slug, value = integer count.
+// Stored separately from LINKS_KEY so the link values stay plain URL strings.
+export const CLICKS_KEY = "clicks";
+
+// Scan counters: the subset of clicks that came from scanning the link's QR
+// code (the QR encodes the short URL with a ?src=qr marker). field = slug.
+export const SCANS_KEY = "scans";
+
+// Disabled links, kept as a set of slugs. A slug in this set still exists (URL
+// and click count are preserved) but the proxy refuses to redirect it.
+export const DISABLED_KEY = "disabled";
+
+// Per-hit event log for one slug: a capped Redis list of small JSON objects,
+// newest first, describing each click/scan (time, device, browser, geo, …).
+export const eventsKey = (slug: string) => `events:${slug}`;
+
+// How many recent hits we keep per link.
+export const EVENTS_LIMIT = 500;
