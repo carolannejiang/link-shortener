@@ -227,21 +227,29 @@ export default function Admin() {
   }
 
   // On load, ask the server whether a passkey exists and whether we're already
-  // signed in (via a session cookie from a previous visit).
+  // signed in (via a session cookie from a previous visit). The links list is
+  // fetched at the same time as the status check — it just 401s harmlessly
+  // when we aren't signed in — so a returning visit costs one round trip.
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/auth/status");
-        const data = await res.json().catch(() => ({}));
-        setHasPasskey(Boolean(data.hasPasskey));
-        if (data.authenticated) await loadLinks();
+        const [statusRes, linksRes] = await Promise.all([
+          fetch("/api/auth/status"),
+          fetch("/api/links"),
+        ]);
+        const status = await statusRes.json().catch(() => ({}));
+        setHasPasskey(Boolean(status.hasPasskey));
+        if (status.authenticated && linksRes.ok) {
+          const data = await linksRes.json().catch(() => ({}));
+          setLinks(data.links ?? {});
+          setUnlocked(true);
+        }
       } catch {
         // Ignore — the user can still unlock manually.
       } finally {
         setBooting(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function unlockWithPassword(e: React.FormEvent) {

@@ -14,7 +14,10 @@ if (!url || !token) {
   );
 }
 
-export const redis = new Redis({ url, token });
+// Auto-pipelining batches commands issued in the same tick (e.g. under a
+// Promise.all) into one HTTP request — over the REST transport each command
+// would otherwise pay its own round trip.
+export const redis = new Redis({ url, token, enableAutoPipelining: true });
 
 // Every link is one field in a single Redis hash: field = slug, value = URL.
 export const LINKS_KEY = "links";

@@ -7,6 +7,7 @@
   --accent: #111111;
   --accent-fg: #ffffff;
   --danger: #b42318;
+  --link: #2563eb;
   --field-bg: #ffffff;
 }
 
@@ -19,6 +20,7 @@
     --accent: #f4f4f5;
     --accent-fg: #0b0b0c;
     --danger: #f97066;
+    --link: #60a5fa;
     --field-bg: #161618;
   }
 }

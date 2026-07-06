@@ -136,10 +136,13 @@ export async function POST(req: NextRequest) {
     slug = rawSlug;
   }
 
-  await redis.hset(LINKS_KEY, { [slug]: parsed.toString() });
   // Saving a link (re)activates it — clear any leftover disabled flag so an
-  // overwrite of a disabled slug starts working again.
-  await redis.srem(DISABLED_KEY, slug);
+  // overwrite of a disabled slug starts working again. The two writes are
+  // independent, so issue them together (one batched round trip).
+  await Promise.all([
+    redis.hset(LINKS_KEY, { [slug]: parsed.toString() }),
+    redis.srem(DISABLED_KEY, slug),
+  ]);
   return NextResponse.json({ ok: true, slug, url: parsed.toString() });
 }
 
