@@ -16,6 +16,7 @@ type Hit = {
   device: string;
   os: string;
   browser: string;
+  model?: string;
   ref?: string;
   country?: string;
   city?: string;
@@ -119,7 +120,7 @@ function StatsBlock({ hits }: { hits: Hit[] | undefined }) {
               {h.device} · {h.os} · {h.browser}
             </span>
             <span style={S.hitMeta}>
-              {[place(h), h.ref, h.src === "qr" ? "QR" : null]
+              {[h.model, place(h), h.ref, h.src === "qr" ? "QR" : null]
                 .filter(Boolean)
                 .join(" · ")}
             </span>

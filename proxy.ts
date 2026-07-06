@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { UAParser } from "ua-parser-js";
+import { Bots } from "ua-parser-js/extensions";
 import {
   redis,
   LINKS_KEY,
@@ -14,41 +16,31 @@ import {
 type HitEvent = {
   t: number; // unix ms
   src: "qr" | "direct";
-  device: string;
-  os: string;
-  browser: string;
+  device: string; // mobile / tablet / desktop / bot / console / smarttv / …
+  os: string; // name + version, e.g. "iOS 17.4"
+  browser: string; // name + major version, e.g. "Mobile Safari 17"
+  model?: string; // device vendor + model, e.g. "Apple iPhone"
   ref?: string; // referring host, if any
   country?: string;
   city?: string;
 };
 
-// Rough device class from the user-agent string. Not exhaustive, just enough
-// to answer "phone vs. tablet vs. computer".
-function deviceType(ua: string): string {
-  if (!ua) return "unknown";
-  if (/ipad|tablet|playbook|silk/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua)))
-    return "tablet";
-  if (/mobi|iphone|ipod|windows phone/i.test(ua)) return "mobile";
-  return "desktop";
-}
-
-function osName(ua: string): string {
-  if (/windows nt/i.test(ua)) return "Windows";
-  if (/iphone|ipad|ipod/i.test(ua)) return "iOS";
-  if (/mac os x/i.test(ua)) return "macOS";
-  if (/android/i.test(ua)) return "Android";
-  if (/linux/i.test(ua)) return "Linux";
-  return "Other";
-}
-
-// Order matters: several browsers spoof "Safari"/"Chrome" in their UA.
-function browserName(ua: string): string {
-  if (/edg\//i.test(ua)) return "Edge";
-  if (/opr\/|opera/i.test(ua)) return "Opera";
-  if (/chrome\//i.test(ua)) return "Chrome";
-  if (/firefox\//i.test(ua)) return "Firefox";
-  if (/safari\//i.test(ua)) return "Safari";
-  return "Other";
+// Full user-agent parse: precise browser/OS versions, device vendor + model,
+// and crawler detection (bots come back with browser.type === "crawler"). The
+// Bots extension adds the crawler signatures on top of the default matchers.
+function parseUa(ua: string): Pick<HitEvent, "device" | "os" | "browser" | "model"> {
+  const r = new UAParser(ua, Bots).getResult();
+  const isBot = r.browser.type === "crawler";
+  const join = (...parts: (string | undefined)[]) =>
+    parts.filter(Boolean).join(" ") || undefined;
+  return {
+    // A crawler's device.type is empty, so classify it explicitly as "bot".
+    // A normal desktop also has an empty device.type — fall back to "desktop".
+    device: isBot ? "bot" : r.device.type ?? "desktop",
+    os: join(r.os.name, r.os.version) ?? "Other",
+    browser: join(r.browser.name, r.browser.major) ?? "Other",
+    model: join(r.device.vendor, r.device.model),
+  };
 }
 
 function refHost(referer: string | null): string | undefined {
@@ -96,9 +88,7 @@ export async function proxy(req: NextRequest) {
   const event: HitEvent = {
     t: Date.now(),
     src: fromQr ? "qr" : "direct",
-    device: deviceType(ua),
-    os: osName(ua),
-    browser: browserName(ua),
+    ...parseUa(ua),
     ref: refHost(req.headers.get("referer")),
     country: geoValue(req.headers.get("x-vercel-ip-country")),
     city: geoValue(req.headers.get("x-vercel-ip-city")),
