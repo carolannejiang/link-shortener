@@ -18,7 +18,7 @@ export default function Home() {
         >
           Carolanne
         </a>
-        . <a href="/admin">Admin</a>
+        .
       </p>
     </main>
   );
