@@ -7,7 +7,13 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 
-type Link = { url: string; clicks: number; scans: number; disabled: boolean };
+type Link = {
+  url: string;
+  clicks: number;
+  scans: number;
+  disabled: boolean;
+  note: string;
+};
 type Links = Record<string, Link>;
 
 type Hit = {
@@ -198,6 +204,8 @@ export default function Admin() {
   const [qrFor, setQrFor] = useState<string | null>(null);
   const [statsFor, setStatsFor] = useState<string | null>(null);
   const [statsData, setStatsData] = useState<Record<string, Hit[]>>({});
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
 
   // Only send the password header when we actually have a password typed in;
   // otherwise the session cookie does the authenticating.
@@ -358,6 +366,7 @@ export default function Admin() {
           clicks: prev[data.slug]?.clicks ?? 0,
           scans: prev[data.slug]?.scans ?? 0,
           disabled: false,
+          note: prev[data.slug]?.note ?? "",
         },
       }));
       setSlug("");
@@ -390,6 +399,32 @@ export default function Admin() {
       }
     } catch {
       // Leave it in the loading state; the user can retry by toggling.
+    }
+  }
+
+  // Open (or close) the note editor for a link, seeding the textarea with its
+  // current note.
+  function toggleNote(s: string) {
+    if (noteFor === s) {
+      setNoteFor(null);
+      return;
+    }
+    setNoteDraft(links[s]?.note ?? "");
+    setNoteFor(s);
+  }
+
+  async function saveNote(s: string) {
+    setError("");
+    setBusy(true);
+    try {
+      const note = noteDraft.trim();
+      await api("PATCH", { slug: s, note });
+      setLinks((prev) => ({ ...prev, [s]: { ...prev[s], note } }));
+      setNoteFor(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -481,7 +516,145 @@ export default function Admin() {
           </div>
         ) : (
           <>
-            <div style={S.passkeyBar}>
+            <section style={S.section}>
+              <h2 style={S.sectionLabel}>New link</h2>
+              <form onSubmit={addLink} style={S.form}>
+                <label style={S.label}>
+                  Destination URL
+                  <input
+                    type="text"
+                    inputMode="url"
+                    placeholder="example.com/a/very/long/url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    style={S.input}
+                    required
+                  />
+                </label>
+                <label style={S.label}>
+                  Short name (optional)
+                  <div style={S.slugRow}>
+                    <span style={S.slugPrefix}>{host}/</span>
+                    <input
+                      type="text"
+                      placeholder="leave blank for a random one"
+                      value={slug}
+                      onChange={(e) =>
+                        setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+                      }
+                      style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                    />
+                  </div>
+                </label>
+                <button type="submit" disabled={busy || !url} style={S.primary}>
+                  {busy ? "Saving…" : "Save link"}
+                </button>
+              </form>
+            </section>
+
+            <section style={S.section}>
+              <h2 style={S.sectionLabel}>
+                Links{entries.length > 0 && ` · ${entries.length}`}
+              </h2>
+              {entries.length === 0 ? (
+                <p style={S.muted}>No links yet — add one above to get started.</p>
+              ) : (
+                <ul style={S.list}>
+                  {entries.map(([s, u]) => (
+                    <li key={s} style={{ ...S.item, opacity: u.disabled ? 0.6 : 1 }}>
+                      <div style={S.itemHead}>
+                        <a
+                          href={`/${s}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={S.shortLink}
+                        >
+                          {host}/{s}
+                        </a>
+                        {u.disabled && <span style={S.disabledTag}>disabled</span>}
+                        <span style={S.clicks}>
+                          {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
+                          {u.scans > 0 &&
+                            ` · ${u.scans} scan${u.scans === 1 ? "" : "s"}`}
+                        </span>
+                      </div>
+                      <div style={S.dest} title={u.url}>
+                        → {u.url}
+                      </div>
+                      {u.note && <div style={S.note}>📝 {u.note}</div>}
+                      <div style={S.toolbar}>
+                        <button
+                          onClick={() => toggleStats(s)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${statsFor === s ? "Hide" : "Show"} stats for ${s}`}
+                        >
+                          {statsFor === s ? "Hide stats" : "Stats"}
+                        </button>
+                        <button
+                          onClick={() => toggleNote(s)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${noteFor === s ? "Close" : "Edit"} note for ${s}`}
+                        >
+                          {noteFor === s ? "Close note" : u.note ? "Edit note" : "Note"}
+                        </button>
+                        <button
+                          onClick={() => setQrFor((cur) => (cur === s ? null : s))}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${qrFor === s ? "Hide" : "Show"} QR code for ${s}`}
+                        >
+                          {qrFor === s ? "Hide QR" : "QR"}
+                        </button>
+                        <button
+                          onClick={() => toggleLink(s, !u.disabled)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${u.disabled ? "Enable" : "Disable"} ${s}`}
+                        >
+                          {u.disabled ? "Enable" : "Disable"}
+                        </button>
+                        <button
+                          onClick={() => removeLink(s)}
+                          disabled={busy}
+                          style={{ ...S.delete, marginLeft: "auto" }}
+                          aria-label={`Delete ${s}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      {noteFor === s && (
+                      <div style={S.noteEditor}>
+                        <textarea
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          placeholder="Private note about this link — only you see it here."
+                          rows={3}
+                          maxLength={2000}
+                          style={S.textarea}
+                        />
+                        <div style={S.noteActions}>
+                          <button
+                            type="button"
+                            onClick={() => saveNote(s)}
+                            disabled={busy}
+                            style={S.secondaryBtn}
+                          >
+                            {busy ? "Saving…" : "Save note"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {statsFor === s && <StatsBlock hits={statsData[s]} />}
+                    {qrFor === s && <QrBlock slug={s} />}
+                  </li>
+                ))}
+              </ul>
+            )}
+            </section>
+
+            <div style={S.footer}>
               <span style={S.muted}>
                 {hasPasskey
                   ? "Touch ID is available on registered devices."
@@ -496,115 +669,6 @@ export default function Admin() {
                 {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
               </button>
             </div>
-
-            <hr style={S.hr} />
-
-            <form onSubmit={addLink} style={S.form}>
-              <label style={S.label}>
-                Destination URL
-                <input
-                  type="text"
-                  inputMode="url"
-                  placeholder="example.com/a/very/long/url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  style={S.input}
-                  required
-                />
-              </label>
-              <label style={S.label}>
-                Short name (optional)
-                <div style={S.slugRow}>
-                  <span style={S.slugPrefix}>{host}/</span>
-                  <input
-                    type="text"
-                    placeholder="leave blank for a random one"
-                    value={slug}
-                    onChange={(e) =>
-                      setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-                    }
-                    style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
-                  />
-                </div>
-              </label>
-              <button type="submit" disabled={busy || !url} style={S.primary}>
-                {busy ? "Saving…" : "Save link"}
-              </button>
-            </form>
-
-            <hr style={S.hr} />
-
-            {entries.length === 0 ? (
-              <p style={S.muted}>No links yet.</p>
-            ) : (
-              <ul style={S.list}>
-                {entries.map(([s, u]) => (
-                  <li
-                    key={s}
-                    style={{ ...S.item, opacity: u.disabled ? 0.55 : 1 }}
-                  >
-                    <div style={S.itemRow}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={S.shortLinkRow}>
-                        <a
-                          href={`/${s}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={S.shortLink}
-                        >
-                          {host}/{s}
-                        </a>
-                        <span style={S.clicks}>
-                          {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
-                          {u.scans > 0 && ` · ${u.scans} scan${u.scans === 1 ? "" : "s"}`}
-                        </span>
-                        {u.disabled && <span style={S.disabledTag}>disabled</span>}
-                      </div>
-                      <div style={S.dest} title={u.url}>
-                        → {u.url}
-                      </div>
-                    </div>
-                    <div style={S.actions}>
-                      <button
-                        onClick={() => toggleStats(s)}
-                        disabled={busy}
-                        style={S.secondaryBtn}
-                        aria-label={`${statsFor === s ? "Hide" : "Show"} stats for ${s}`}
-                      >
-                        {statsFor === s ? "Hide stats" : "Stats"}
-                      </button>
-                      <button
-                        onClick={() => setQrFor((cur) => (cur === s ? null : s))}
-                        disabled={busy}
-                        style={S.secondaryBtn}
-                        aria-label={`${qrFor === s ? "Hide" : "Show"} QR code for ${s}`}
-                      >
-                        {qrFor === s ? "Hide QR" : "QR"}
-                      </button>
-                      <button
-                        onClick={() => toggleLink(s, !u.disabled)}
-                        disabled={busy}
-                        style={S.secondaryBtn}
-                        aria-label={`${u.disabled ? "Enable" : "Disable"} ${s}`}
-                      >
-                        {u.disabled ? "Enable" : "Disable"}
-                      </button>
-                      <button
-                        onClick={() => removeLink(s)}
-                        disabled={busy}
-                        style={S.delete}
-                        aria-label={`Delete ${s}`}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                    </div>
-                    {statsFor === s && <StatsBlock hits={statsData[s]} />}
-                    {qrFor === s && <QrBlock slug={s} />}
-                  </li>
-                ))}
-              </ul>
-            )}
           </>
         )}
 
@@ -699,29 +763,45 @@ const S: Record<string, React.CSSProperties> = {
     background: "var(--bg, #000)",
     padding: "0 .6rem",
   },
-  passkeyBar: {
+  section: { marginBottom: "1.75rem" },
+  sectionLabel: {
+    fontSize: ".7rem",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: ".07em",
+    color: "var(--muted)",
+    margin: "0 0 .75rem",
+  },
+  footer: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: ".75rem",
     flexWrap: "wrap",
+    paddingTop: "1.25rem",
+    borderTop: "1px solid var(--border)",
     fontSize: ".85rem",
   },
-  hr: { border: "none", borderTop: "1px solid var(--border)", margin: "1.5rem 0" },
   list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".5rem" },
   item: {
     display: "flex",
     flexDirection: "column",
-    gap: ".75rem",
-    padding: ".6rem .75rem",
+    gap: ".55rem",
+    padding: ".75rem .85rem",
     border: "1px solid var(--border)",
     borderRadius: 8,
   },
-  itemRow: {
+  itemHead: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: ".75rem",
+    gap: ".5rem",
+    flexWrap: "wrap",
+  },
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: ".4rem",
+    flexWrap: "wrap",
   },
   qrBlock: {
     display: "flex",
@@ -762,14 +842,9 @@ const S: Record<string, React.CSSProperties> = {
   },
   hitTime: { color: "var(--fg)", fontWeight: 600 },
   hitMeta: { fontSize: ".75rem", color: "var(--muted)" },
-  shortLinkRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: ".5rem",
-    flexWrap: "wrap",
-  },
   shortLink: { fontWeight: 600, textDecoration: "none" },
   clicks: {
+    marginLeft: "auto",
     fontSize: ".75rem",
     color: "var(--muted)",
     whiteSpace: "nowrap",
@@ -800,6 +875,30 @@ const S: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+  note: {
+    fontSize: ".8rem",
+    color: "var(--fg)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  noteEditor: {
+    display: "flex",
+    flexDirection: "column",
+    gap: ".5rem",
+    paddingTop: ".25rem",
+  },
+  noteActions: { display: "flex", justifyContent: "flex-end" },
+  textarea: {
+    width: "100%",
+    padding: ".65rem .75rem",
+    fontSize: ".9rem",
+    fontFamily: "inherit",
+    color: "var(--fg)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    resize: "vertical",
   },
   delete: {
     flexShrink: 0,
