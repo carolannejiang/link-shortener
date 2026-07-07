@@ -5,6 +5,7 @@ import {
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
+  NOTES_KEY,
   eventsKey,
 } from "@/lib/redis";
 import { authorized } from "@/lib/auth";
@@ -14,6 +15,9 @@ export const runtime = "nodejs";
 // Slugs that must never be turned into short links, because they'd shadow the
 // real pages/routes of this app.
 const RESERVED = new Set(["admin", "api"]);
+
+// Upper bound on a link's note, so a stray paste can't bloat the hash.
+const MAX_NOTE_LEN = 2000;
 
 // Lowercase letters, numbers, and dashes only.
 const SLUG_RE = /^[a-z0-9-]+$/;
@@ -80,11 +84,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ slug: statsSlug, events });
   }
 
-  const [urls, clicks, scans, disabledList] = await Promise.all([
+  const [urls, clicks, scans, disabledList, notes] = await Promise.all([
     redis.hgetall<Record<string, string>>(LINKS_KEY),
     redis.hgetall<Record<string, number>>(CLICKS_KEY),
     redis.hgetall<Record<string, number>>(SCANS_KEY),
     redis.smembers(DISABLED_KEY),
+    redis.hgetall<Record<string, string>>(NOTES_KEY),
   ]);
 
   const disabled = new Set(disabledList ?? []);
@@ -96,6 +101,7 @@ export async function GET(req: NextRequest) {
         clicks: Number(clicks?.[slug] ?? 0),
         scans: Number(scans?.[slug] ?? 0),
         disabled: disabled.has(slug),
+        note: notes?.[slug] ?? "",
       },
     ]),
   );
@@ -146,20 +152,40 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, slug, url: parsed.toString() });
 }
 
-// Enable or disable a link without deleting it.
+// Update an existing link in place: toggle its disabled state and/or set its
+// note. Only the fields present in the request body are touched, so the admin
+// can send just `disabled` or just `note`.
 export async function PATCH(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
   const body = await req.json().catch(() => null);
   const slug = String(body?.slug ?? "").trim().toLowerCase();
-  const disabled = Boolean(body?.disabled);
   if (!slug) return bad("Missing slug.");
   if (!(await redis.hexists(LINKS_KEY, slug))) return bad("No such link.");
 
-  if (disabled) await redis.sadd(DISABLED_KEY, slug);
-  else await redis.srem(DISABLED_KEY, slug);
+  const writes: Promise<unknown>[] = [];
 
-  return NextResponse.json({ ok: true, slug, disabled });
+  let disabled: boolean | undefined;
+  if (typeof body?.disabled === "boolean") {
+    disabled = body.disabled;
+    writes.push(
+      disabled ? redis.sadd(DISABLED_KEY, slug) : redis.srem(DISABLED_KEY, slug),
+    );
+  }
+
+  let note: string | undefined;
+  if (typeof body?.note === "string") {
+    note = body.note.trim().slice(0, MAX_NOTE_LEN);
+    // An empty note clears the field rather than storing a blank string.
+    writes.push(
+      note ? redis.hset(NOTES_KEY, { [slug]: note }) : redis.hdel(NOTES_KEY, slug),
+    );
+  }
+
+  // Independent writes → auto-pipelining folds them into one round trip.
+  await Promise.all(writes);
+
+  return NextResponse.json({ ok: true, slug, disabled, note });
 }
 
 // Delete a link by slug, along with its click count and disabled flag.
@@ -175,6 +201,7 @@ export async function DELETE(req: NextRequest) {
     redis.hdel(CLICKS_KEY, slug),
     redis.hdel(SCANS_KEY, slug),
     redis.srem(DISABLED_KEY, slug),
+    redis.hdel(NOTES_KEY, slug),
     redis.del(eventsKey(slug)),
   ]);
   return NextResponse.json({ ok: true });

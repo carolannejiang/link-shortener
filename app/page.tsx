@@ -8,6 +8,9 @@ export default function Home() {
         display: "grid",
         placeItems: "center",
         padding: "2rem",
+        // Times New Roman is a deliberate touch for the public landing page;
+        // the rest of the site (admin) keeps the default UI sans-serif.
+        fontFamily: '"Times New Roman", Times, serif',
       }}
     >
       <p style={{ color: "var(--muted)", textAlign: "center", maxWidth: "28rem" }}>

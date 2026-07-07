@@ -34,6 +34,10 @@ export const SCANS_KEY = "scans";
 // and click count are preserved) but the proxy refuses to redirect it.
 export const DISABLED_KEY = "disabled";
 
+// Private, admin-only notes about a link, kept in a parallel hash: field =
+// slug, value = free-text note. Never shown to visitors — only in the admin.
+export const NOTES_KEY = "notes";
+
 // Per-hit event log for one slug: a capped Redis list of small JSON objects,
 // newest first, describing each click/scan (time, device, browser, geo, …).
 export const eventsKey = (slug: string) => `events:${slug}`;

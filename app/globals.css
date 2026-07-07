@@ -35,9 +35,48 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 16px/1.5 "Times New Roman", Times, serif;
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
 }
 
 a {
   color: inherit;
+}
+
+/* Form controls don't inherit the page font by default — make them match. */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* Consistent interaction feedback across every button variant, regardless of
+   its base colors: dim slightly on hover, press down on click, fade when
+   disabled. */
+button {
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+button:not(:disabled):hover {
+  opacity: 0.82;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* Visible keyboard-focus ring (mouse clicks don't trigger :focus-visible). */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }
