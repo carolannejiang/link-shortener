@@ -1,181 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { QRCodeCanvas } from "qrcode.react";
+import { useEffect, useState } from "react";
 import {
   startRegistration,
   startAuthentication,
 } from "@simplewebauthn/browser";
+import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
+import { QrBlock } from "./qr-block";
+import { StatsBlock } from "./stats-block";
+import { S } from "./styles";
 
-type Link = {
-  url: string;
-  clicks: number;
-  scans: number;
-  disabled: boolean;
-  note: string;
-};
-type Links = Record<string, Link>;
-
-type Hit = {
-  t: number;
-  src: "qr" | "direct";
-  device: string;
-  os: string;
-  browser: string;
-  model?: string;
-  ref?: string;
-  country?: string;
-  city?: string;
-};
+type Links = Record<string, LinkInfo>;
 
 // The short-link domain, used only to render previews like carolanne.link/career.
-// Falls back to whatever host the admin page is loaded from.
+// Falls back to the production domain during prerendering.
 function shortHost() {
   if (typeof window !== "undefined") return window.location.host;
   return "carolanne.link";
-}
-
-// The full origin (scheme + host) used to build absolute QR-code URLs.
-function shortOrigin() {
-  if (typeof window !== "undefined") return window.location.origin;
-  return "https://carolanne.link";
-}
-
-// The value a link's QR code encodes: the absolute short URL, tagged with
-// ?src=qr so the proxy can count scans separately from ordinary clicks.
-function qrValue(slug: string) {
-  return `${shortOrigin()}/${slug}?src=qr`;
-}
-
-// A QR code (PNG) for one link. It's copied to the clipboard automatically when
-// it appears, with buttons to copy again or download it.
-function QrBlock({ slug }: { slug: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState("");
-
-  function canvasPng(): Promise<Blob | null> {
-    const canvas = ref.current?.querySelector("canvas");
-    if (!canvas) return Promise.resolve(null);
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-  }
-
-  async function copy() {
-    try {
-      const blob = await canvasPng();
-      if (!blob) throw new Error("no image");
-      await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob }),
-      ]);
-      setStatus("Copied to clipboard ✓");
-    } catch {
-      // Browsers block clipboard writes without a fresh click / when the tab
-      // isn't focused — fall back to asking the user to press the button.
-      setStatus('Press "Copy PNG" to copy');
-    }
-  }
-
-  async function download() {
-    const canvas = ref.current?.querySelector("canvas");
-    if (!canvas) return;
-    const a = document.createElement("a");
-    a.href = canvas.toDataURL("image/png");
-    a.download = `${slug}-qr.png`;
-    a.click();
-  }
-
-  // Best-effort auto-copy as soon as the code renders.
-  useEffect(() => {
-    copy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div style={S.qrBlock}>
-      <div ref={ref} style={S.qrCanvas}>
-        <QRCodeCanvas value={qrValue(slug)} size={148} marginSize={2} />
-      </div>
-      <div style={S.actions}>
-        <button type="button" onClick={copy} style={S.secondaryBtn}>
-          Copy PNG
-        </button>
-        <button type="button" onClick={download} style={S.secondaryBtn}>
-          Download PNG
-        </button>
-      </div>
-      {status && <span style={S.hitMeta}>{status}</span>}
-    </div>
-  );
-}
-
-// Format a hit timestamp compactly, e.g. "Jul 6, 2:04 PM".
-function fmtTime(t: number): string {
-  return new Date(t).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-// Count hits by one field, biggest first: [["mobile", 12], ["desktop", 3]].
-function tally(hits: Hit[], key: keyof Hit): [string, number][] {
-  const counts: Record<string, number> = {};
-  for (const h of hits) {
-    const v = String(h[key] ?? "unknown");
-    counts[v] = (counts[v] ?? 0) + 1;
-  }
-  return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-}
-
-function place(h: Hit): string {
-  return [h.city, h.country].filter(Boolean).join(", ");
-}
-
-// The expandable analytics panel for one link: a few breakdowns plus a list of
-// the most recent hits.
-function StatsBlock({ hits }: { hits: Hit[] | undefined }) {
-  if (hits === undefined) return <div style={S.statsBlock}>Loading…</div>;
-  if (hits.length === 0)
-    return <div style={S.statsBlock}>No visits recorded yet.</div>;
-
-  const devices = tally(hits, "device");
-
-  return (
-    <div style={S.statsBlock}>
-      <div style={S.chips}>
-        {devices.map(([name, n]) => (
-          <span key={name} style={S.chip}>
-            {name} {n}
-          </span>
-        ))}
-      </div>
-      <div style={S.hitList}>
-        {hits.slice(0, 25).map((h, i) => (
-          <div key={i} style={S.hitRow}>
-            <span style={S.hitTime}>{fmtTime(h.t)}</span>
-            <span>
-              {h.device} · {h.os} · {h.browser}
-            </span>
-            <span style={S.hitMeta}>
-              {[h.model, place(h), h.ref, h.src === "qr" ? "QR" : null]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-          </div>
-        ))}
-      </div>
-      {hits.length > 25 && (
-        <div style={S.hitMeta}>Showing 25 of {hits.length} recent hits.</div>
-      )}
-    </div>
-  );
 }
 
 // A friendly label for the passkey we're about to create, based on the device.
 function deviceLabel() {
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
   if (/iphone/i.test(ua)) return "iPhone";
-  if (/ipad/i.test(ua)) return "iPad";
+  // iPadOS reports itself as a Mac; the touch screen gives it away.
+  const touches = typeof navigator !== "undefined" ? navigator.maxTouchPoints : 0;
+  if (/ipad/i.test(ua) || (/mac/i.test(ua) && touches > 1)) return "iPad";
   if (/android/i.test(ua)) return "Android phone";
   if (/mac/i.test(ua)) return "Mac";
   if (/windows/i.test(ua)) return "Windows PC";
@@ -204,11 +54,12 @@ export default function Admin() {
   const [qrFor, setQrFor] = useState<string | null>(null);
   const [statsFor, setStatsFor] = useState<string | null>(null);
   const [statsData, setStatsData] = useState<Record<string, Hit[]>>({});
+  const [statsError, setStatsError] = useState<Record<string, boolean>>({});
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
 
-  // Only send the password header when we actually have a password typed in;
-  // otherwise the session cookie does the authenticating.
+  // Only send the password header while unlocking; once a session cookie
+  // exists it does the authenticating and the password is wiped from state.
   function authHeaders(): Record<string, string> {
     return password ? { "x-admin-password": password } : {};
   }
@@ -224,6 +75,12 @@ export default function Admin() {
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && !password) {
+      // The session expired mid-use: drop back to the lock screen instead of
+      // failing every button with a cryptic error.
+      setUnlocked(false);
+      throw new Error("Your session expired — unlock again.");
+    }
     if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`);
     return data;
   }
@@ -265,6 +122,15 @@ export default function Admin() {
     setError("");
     setBusy(true);
     try {
+      // Trade the password for a session cookie so the unlock survives
+      // reloads, then stop sending the password anywhere.
+      const res = await fetch("/api/auth/password-login", {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? "Wrong password.");
+      setPassword("");
       await loadLinks();
     } catch (err) {
       setError((err as Error).message);
@@ -349,6 +215,11 @@ export default function Admin() {
       setPassword("");
       setLinks({});
       setInfo("");
+      setQrFor(null);
+      setStatsFor(null);
+      setNoteFor(null);
+      setStatsData({});
+      setStatsError({});
       setBusy(false);
     }
   }
@@ -379,26 +250,25 @@ export default function Admin() {
     }
   }
 
-  // Toggle the analytics panel for a link, lazily fetching its hit log the
-  // first time it's opened.
+  // Toggle the analytics panel for a link. Fetches fresh data on every open;
+  // any previously loaded list stays visible while the refresh is in flight.
   async function toggleStats(s: string) {
     if (statsFor === s) {
       setStatsFor(null);
       return;
     }
     setStatsFor(s);
-    if (statsData[s]) return; // already loaded
+    setStatsError((prev) => ({ ...prev, [s]: false }));
     try {
       const res = await fetch(`/api/links?stats=${encodeURIComponent(s)}`, {
         headers: authHeaders(),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const hits: Hit[] = (data.events ?? []).filter(Boolean);
-        setStatsData((prev) => ({ ...prev, [s]: hits }));
-      }
+      if (!res.ok) throw new Error();
+      const hits: Hit[] = (data.events ?? []).filter(Boolean);
+      setStatsData((prev) => ({ ...prev, [s]: hits }));
     } catch {
-      // Leave it in the loading state; the user can retry by toggling.
+      setStatsError((prev) => ({ ...prev, [s]: true }));
     }
   }
 
@@ -464,7 +334,7 @@ export default function Admin() {
 
   return (
     <main style={S.page}>
-      <div style={S.card}>
+      <div style={unlocked ? S.card : S.cardNarrow}>
         <div style={S.header}>
           <h1 style={S.h1}>carolanne.link</h1>
           {unlocked && (
@@ -473,6 +343,17 @@ export default function Admin() {
             </button>
           )}
         </div>
+
+        {info && (
+          <p style={S.info} role="status">
+            {info}
+          </p>
+        )}
+        {error && (
+          <p style={S.error} role="alert">
+            {error}
+          </p>
+        )}
 
         {booting ? (
           <p style={S.muted}>Loading…</p>
@@ -502,6 +383,7 @@ export default function Admin() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoFocus={!hasPasskey}
+                  autoComplete="current-password"
                   style={S.input}
                 />
               </label>
@@ -515,44 +397,62 @@ export default function Admin() {
             </form>
           </div>
         ) : (
-          <>
-            <section style={S.section}>
-              <h2 style={S.sectionLabel}>New link</h2>
-              <form onSubmit={addLink} style={S.form}>
-                <label style={S.label}>
-                  Destination URL
-                  <input
-                    type="text"
-                    inputMode="url"
-                    placeholder="example.com/a/very/long/url"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    style={S.input}
-                    required
-                  />
-                </label>
-                <label style={S.label}>
-                  Short name (optional)
-                  <div style={S.slugRow}>
-                    <span style={S.slugPrefix}>{host}/</span>
+          <div style={S.columns}>
+            <div style={S.sidebar}>
+              <section style={S.section}>
+                <h2 style={S.sectionLabel}>New link</h2>
+                <form onSubmit={addLink} style={S.form}>
+                  <label style={S.label}>
+                    Destination URL
                     <input
                       type="text"
-                      placeholder="leave blank for a random one"
-                      value={slug}
-                      onChange={(e) =>
-                        setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-                      }
-                      style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                      inputMode="url"
+                      placeholder="example.com/a/very/long/url"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      style={S.input}
+                      required
                     />
-                  </div>
-                </label>
-                <button type="submit" disabled={busy || !url} style={S.primary}>
-                  {busy ? "Saving…" : "Save link"}
-                </button>
-              </form>
-            </section>
+                  </label>
+                  <label style={S.label}>
+                    Short name (optional)
+                    <div style={S.slugRow}>
+                      <span style={S.slugPrefix}>{host}/</span>
+                      <input
+                        type="text"
+                        placeholder="leave blank for a random one"
+                        value={slug}
+                        onChange={(e) =>
+                          setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+                        }
+                        style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                      />
+                    </div>
+                  </label>
+                  <button type="submit" disabled={busy || !url} style={S.primary}>
+                    {busy ? "Saving…" : "Save link"}
+                  </button>
+                </form>
+              </section>
 
-            <section style={S.section}>
+              <div style={S.footer}>
+                <span style={S.muted}>
+                  {hasPasskey
+                    ? "Touch ID is available on registered devices."
+                    : "Skip the password next time:"}
+                </span>
+                <button
+                  type="button"
+                  onClick={setupTouchID}
+                  disabled={busy}
+                  style={S.secondary}
+                >
+                  {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
+                </button>
+              </div>
+            </div>
+
+            <section style={{ ...S.section, ...S.mainCol }}>
               <h2 style={S.sectionLabel}>
                 Links{entries.length > 0 && ` · ${entries.length}`}
               </h2>
@@ -625,306 +525,39 @@ export default function Admin() {
                         </button>
                       </div>
                       {noteFor === s && (
-                      <div style={S.noteEditor}>
-                        <textarea
-                          value={noteDraft}
-                          onChange={(e) => setNoteDraft(e.target.value)}
-                          placeholder="Private note about this link — only you see it here."
-                          rows={3}
-                          maxLength={2000}
-                          style={S.textarea}
-                        />
-                        <div style={S.noteActions}>
-                          <button
-                            type="button"
-                            onClick={() => saveNote(s)}
-                            disabled={busy}
-                            style={S.secondaryBtn}
-                          >
-                            {busy ? "Saving…" : "Save note"}
-                          </button>
+                        <div style={S.noteEditor}>
+                          <textarea
+                            value={noteDraft}
+                            onChange={(e) => setNoteDraft(e.target.value)}
+                            placeholder="Private note about this link — only you see it here."
+                            rows={3}
+                            maxLength={2000}
+                            style={S.textarea}
+                          />
+                          <div style={S.noteActions}>
+                            <button
+                              type="button"
+                              onClick={() => saveNote(s)}
+                              disabled={busy}
+                              style={S.secondaryBtn}
+                            >
+                              {busy ? "Saving…" : "Save note"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                    {statsFor === s && <StatsBlock hits={statsData[s]} />}
-                    {qrFor === s && <QrBlock slug={s} />}
-                  </li>
-                ))}
-              </ul>
-            )}
+                      )}
+                      {statsFor === s && (
+                        <StatsBlock hits={statsData[s]} error={statsError[s]} />
+                      )}
+                      {qrFor === s && <QrBlock slug={s} />}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
-
-            <div style={S.footer}>
-              <span style={S.muted}>
-                {hasPasskey
-                  ? "Touch ID is available on registered devices."
-                  : "Skip the password next time:"}
-              </span>
-              <button
-                type="button"
-                onClick={setupTouchID}
-                disabled={busy}
-                style={S.secondary}
-              >
-                {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
-              </button>
-            </div>
-          </>
+          </div>
         )}
-
-        {info && <p style={S.info}>{info}</p>}
-        {error && <p style={S.error}>{error}</p>}
       </div>
     </main>
   );
 }
-
-const S: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100dvh",
-    display: "grid",
-    placeItems: "start center",
-    padding: "min(8vh, 4rem) 1rem",
-  },
-  card: { width: "100%", maxWidth: 560 },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    margin: "0 0 1.5rem",
-  },
-  h1: { fontSize: "1.5rem", fontWeight: 600, margin: 0 },
-  form: { display: "grid", gap: "1rem" },
-  label: {
-    display: "grid",
-    gap: ".4rem",
-    fontSize: ".85rem",
-    color: "var(--muted)",
-  },
-  input: {
-    width: "100%",
-    padding: ".65rem .75rem",
-    fontSize: "1rem",
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-  },
-  slugRow: { display: "flex", alignItems: "stretch" },
-  slugPrefix: {
-    display: "flex",
-    alignItems: "center",
-    padding: "0 .6rem",
-    fontSize: ".9rem",
-    color: "var(--muted)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRight: "none",
-    borderRadius: "8px 0 0 8px",
-    whiteSpace: "nowrap",
-  },
-  primary: {
-    padding: ".65rem 1rem",
-    fontSize: "1rem",
-    fontWeight: 600,
-    color: "var(--accent-fg)",
-    background: "var(--accent)",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-  },
-  secondary: {
-    padding: ".55rem .9rem",
-    fontSize: ".9rem",
-    fontWeight: 600,
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    cursor: "pointer",
-  },
-  textBtn: {
-    padding: ".3rem .5rem",
-    fontSize: ".85rem",
-    color: "var(--muted)",
-    background: "transparent",
-    border: "none",
-    cursor: "pointer",
-  },
-  divider: {
-    display: "grid",
-    placeItems: "center",
-    position: "relative",
-    margin: ".25rem 0",
-  },
-  dividerText: {
-    fontSize: ".8rem",
-    color: "var(--muted)",
-    background: "var(--bg, #000)",
-    padding: "0 .6rem",
-  },
-  section: { marginBottom: "1.75rem" },
-  sectionLabel: {
-    fontSize: ".7rem",
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: ".07em",
-    color: "var(--muted)",
-    margin: "0 0 .75rem",
-  },
-  footer: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: ".75rem",
-    flexWrap: "wrap",
-    paddingTop: "1.25rem",
-    borderTop: "1px solid var(--border)",
-    fontSize: ".85rem",
-  },
-  list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".5rem" },
-  item: {
-    display: "flex",
-    flexDirection: "column",
-    gap: ".55rem",
-    padding: ".75rem .85rem",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-  },
-  itemHead: {
-    display: "flex",
-    alignItems: "center",
-    gap: ".5rem",
-    flexWrap: "wrap",
-  },
-  toolbar: {
-    display: "flex",
-    alignItems: "center",
-    gap: ".4rem",
-    flexWrap: "wrap",
-  },
-  qrBlock: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: ".6rem",
-    paddingTop: ".25rem",
-  },
-  qrCanvas: {
-    padding: ".6rem",
-    background: "#fff",
-    borderRadius: 8,
-    lineHeight: 0,
-  },
-  statsBlock: {
-    display: "flex",
-    flexDirection: "column",
-    gap: ".6rem",
-    paddingTop: ".25rem",
-    fontSize: ".8rem",
-    color: "var(--muted)",
-  },
-  chips: { display: "flex", flexWrap: "wrap", gap: ".35rem" },
-  chip: {
-    padding: ".15rem .5rem",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 999,
-    fontSize: ".75rem",
-    color: "var(--fg)",
-  },
-  hitList: { display: "grid", gap: ".25rem" },
-  hitRow: {
-    display: "grid",
-    gap: ".1rem",
-    padding: ".35rem 0",
-    borderTop: "1px solid var(--border)",
-  },
-  hitTime: { color: "var(--fg)", fontWeight: 600 },
-  hitMeta: { fontSize: ".75rem", color: "var(--muted)" },
-  shortLink: { fontWeight: 600, textDecoration: "none" },
-  clicks: {
-    marginLeft: "auto",
-    fontSize: ".75rem",
-    color: "var(--muted)",
-    whiteSpace: "nowrap",
-  },
-  disabledTag: {
-    fontSize: ".7rem",
-    fontWeight: 600,
-    textTransform: "uppercase",
-    letterSpacing: ".03em",
-    color: "var(--danger)",
-    border: "1px solid var(--danger)",
-    borderRadius: 4,
-    padding: "0 .35rem",
-  },
-  actions: { display: "flex", gap: ".4rem", flexShrink: 0 },
-  secondaryBtn: {
-    padding: ".4rem .6rem",
-    fontSize: ".8rem",
-    color: "var(--fg)",
-    background: "transparent",
-    border: "1px solid var(--border)",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  dest: {
-    fontSize: ".8rem",
-    color: "var(--muted)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  note: {
-    fontSize: ".8rem",
-    color: "var(--fg)",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  noteEditor: {
-    display: "flex",
-    flexDirection: "column",
-    gap: ".5rem",
-    paddingTop: ".25rem",
-  },
-  noteActions: { display: "flex", justifyContent: "flex-end" },
-  textarea: {
-    width: "100%",
-    padding: ".65rem .75rem",
-    fontSize: ".9rem",
-    fontFamily: "inherit",
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    resize: "vertical",
-  },
-  delete: {
-    flexShrink: 0,
-    padding: ".4rem .6rem",
-    fontSize: ".8rem",
-    color: "var(--danger)",
-    background: "transparent",
-    border: "1px solid var(--border)",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  muted: { color: "var(--muted)" },
-  info: {
-    marginTop: "1rem",
-    padding: ".6rem .75rem",
-    fontSize: ".9rem",
-    color: "var(--accent)",
-    border: "1px solid var(--accent)",
-    borderRadius: 8,
-  },
-  error: {
-    marginTop: "1rem",
-    padding: ".6rem .75rem",
-    fontSize: ".9rem",
-    color: "var(--danger)",
-    border: "1px solid var(--danger)",
-    borderRadius: 8,
-  },
-};

@@ -10,27 +10,16 @@ import {
   eventsKey,
   EVENTS_LIMIT,
 } from "@/lib/redis";
-
-// One recorded hit. Deliberately coarse — no IP address or anything that
-// identifies an individual, just the shape of the traffic.
-type HitEvent = {
-  t: number; // unix ms
-  src: "qr" | "direct";
-  device: string; // mobile / tablet / desktop / bot / console / smarttv / …
-  os: string; // name + version, e.g. "iOS 17.4"
-  browser: string; // name + major version, e.g. "Mobile Safari 17"
-  model?: string; // device vendor + model, e.g. "Apple iPhone"
-  ref?: string; // referring host, if any
-  country?: string;
-  city?: string;
-};
+import { SLUG_RE, MAX_SLUG_LEN, type HitEvent } from "@/lib/links";
 
 // Full user-agent parse: precise browser/OS versions, device vendor + model,
 // and crawler detection (bots come back with browser.type === "crawler"). The
 // Bots extension adds the crawler signatures on top of the default matchers.
 function parseUa(ua: string): Pick<HitEvent, "device" | "os" | "browser" | "model"> {
   const r = new UAParser(ua, Bots).getResult();
-  const isBot = r.browser.type === "crawler";
+  // The Bots extension tags search engines as "crawler" and link unfurlers
+  // (Slackbot, WhatsApp, iMessage previews, …) as "fetcher" — both are bots.
+  const isBot = r.browser.type === "crawler" || r.browser.type === "fetcher";
   const join = (...parts: (string | undefined)[]) =>
     parts.filter(Boolean).join(" ") || undefined;
   return {
@@ -42,11 +31,6 @@ function parseUa(ua: string): Pick<HitEvent, "device" | "os" | "browser" | "mode
     model: join(r.device.vendor, r.device.model),
   };
 }
-
-// The only shape a slug can have (mirrors SLUG_RE in app/api/links/route.ts).
-// Anything else — dots, slashes, uppercase — can't be a stored link, so the
-// proxy can skip the Redis lookup for it.
-const SLUG_SHAPE = /^[a-z0-9-]+$/;
 
 function refHost(referer: string | null): string | undefined {
   if (!referer) return undefined;
@@ -82,17 +66,23 @@ type HitContext = {
 // Counters for quick totals + a capped log of individual hits, all in one
 // round trip. LTRIM keeps only the most recent EVENTS_LIMIT entries.
 async function recordHit(slug: string, ctx: HitContext) {
+  const parsed = parseUa(ctx.ua);
   const event: HitEvent = {
     t: ctx.t,
     src: ctx.fromQr ? "qr" : "direct",
-    ...parseUa(ctx.ua),
+    ...parsed,
     ref: refHost(ctx.referer),
     country: geoValue(ctx.country),
     city: geoValue(ctx.city),
   };
   const pipe = redis.pipeline();
-  pipe.hincrby(CLICKS_KEY, slug, 1);
-  if (ctx.fromQr) pipe.hincrby(SCANS_KEY, slug, 1);
+  // Link-preview crawlers (iMessage, Slack, WhatsApp, …) fetch every shared
+  // link. They stay visible in the event log, but don't inflate the human
+  // click/scan counters.
+  if (parsed.device !== "bot") {
+    pipe.hincrby(CLICKS_KEY, slug, 1);
+    if (ctx.fromQr) pipe.hincrby(SCANS_KEY, slug, 1);
+  }
   pipe.lpush(eventsKey(slug), event);
   pipe.ltrim(eventsKey(slug), 0, EVENTS_LIMIT - 1);
   await pipe.exec();
@@ -104,7 +94,9 @@ async function recordHit(slug: string, ctx: HitContext) {
 export async function proxy(req: NextRequest, event: NextFetchEvent) {
   let slug: string;
   try {
-    slug = decodeURIComponent(req.nextUrl.pathname.slice(1)); // drop leading "/"
+    // Lowercased so hand-typed links like /Career still resolve — slugs are
+    // always stored lowercase.
+    slug = decodeURIComponent(req.nextUrl.pathname.slice(1)).toLowerCase(); // drop leading "/"
   } catch {
     return NextResponse.next(); // malformed %-encoding can't be a slug
   }
@@ -112,7 +104,9 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
   if (!slug) return NextResponse.next(); // homepage
 
   // Paths that can't possibly be a slug skip the Redis lookup entirely.
-  if (!SLUG_SHAPE.test(slug)) return NextResponse.next();
+  if (slug.length > MAX_SLUG_LEN || !SLUG_RE.test(slug)) {
+    return NextResponse.next();
+  }
 
   // Look up the destination and the disabled flag together; auto-pipelining
   // folds the pair into a single round trip.
@@ -121,8 +115,24 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
     redis.sismember(DISABLED_KEY, slug),
   ]);
 
-  // Unknown slug, or one that's been disabled → fall through to the homepage.
+  // Unknown slug, or one that's been disabled → fall through to the 404 page.
   if (!url || disabled) return NextResponse.next();
+
+  // Defensive: a stored URL should always parse (the API validates it), but a
+  // hand-edited Redis value shouldn't take the whole route down.
+  let dest: URL;
+  try {
+    dest = new URL(url);
+  } catch {
+    return NextResponse.next();
+  }
+
+  // Forward the visitor's query params to the destination — minus our
+  // internal ?src marker — so things like UTM tags survive the hop. Params
+  // the visitor supplies win over ones baked into the stored URL.
+  for (const [key, value] of req.nextUrl.searchParams) {
+    if (key !== "src") dest.searchParams.set(key, value);
+  }
 
   // Record the hit without making the visitor wait for it: waitUntil keeps
   // the function alive after the redirect is sent, so the write still isn't
@@ -143,7 +153,7 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
   // 307 = temporary redirect. We deliberately avoid 301/308 (permanent),
   // because browsers cache those hard — if you ever repoint /career to a
   // new URL, a permanent redirect could keep sending people to the old one.
-  return NextResponse.redirect(url, 307);
+  return NextResponse.redirect(dest, 307);
 }
 
 // Don't run the proxy on framework internals, the admin UI, the API, or any

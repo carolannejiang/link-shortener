@@ -7,33 +7,24 @@ import {
   DISABLED_KEY,
   NOTES_KEY,
   eventsKey,
+  STATS_FETCH_LIMIT,
 } from "@/lib/redis";
+import {
+  SLUG_RE,
+  RESERVED,
+  MAX_SLUG_LEN,
+  MAX_URL_LEN,
+  MAX_NOTE_LEN,
+  normalizeUrl,
+  type LinkInfo,
+} from "@/lib/links";
 import { authorized } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-// Slugs that must never be turned into short links, because they'd shadow the
-// real pages/routes of this app.
-const RESERVED = new Set(["admin", "api"]);
-
-// Upper bound on a link's note, so a stray paste can't bloat the hash.
-const MAX_NOTE_LEN = 2000;
-
-// Lowercase letters, numbers, and dashes only.
-const SLUG_RE = /^[a-z0-9-]+$/;
-
 // Characters used for auto-generated slugs. No vowels-only weirdness needed;
 // this is just a short, URL-safe, unambiguous set.
 const SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-
-// Turn a bare domain like "foo.trycloudflare.com" into a full URL. Anything
-// that already carries an http(s) scheme is left untouched. Other schemes
-// (mailto:, etc.) are left as-is too and get rejected by the protocol check.
-function normalizeUrl(input: string): string {
-  if (/^https?:\/\//i.test(input)) return input;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) return input; // some other scheme://
-  return `https://${input}`;
-}
 
 // A random URL-safe slug, e.g. "a7f2kq".
 function randomSlug(len = 6): string {
@@ -54,7 +45,7 @@ async function uniqueSlug(): Promise<string> {
 }
 
 function unauthorized() {
-  return NextResponse.json({ error: "Wrong password." }, { status: 401 });
+  return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 }
 
 function bad(message: string) {
@@ -76,7 +67,8 @@ export async function GET(req: NextRequest) {
 
   const statsSlug = req.nextUrl.searchParams.get("stats");
   if (statsSlug) {
-    const raw = await redis.lrange(eventsKey(statsSlug), 0, 199);
+    if (!SLUG_RE.test(statsSlug)) return bad("No such link.");
+    const raw = await redis.lrange(eventsKey(statsSlug), 0, STATS_FETCH_LIMIT - 1);
     // Upstash usually deserializes JSON for us; parse any stragglers.
     const events = (raw ?? []).map((e) =>
       typeof e === "string" ? safeParse(e) : e,
@@ -93,7 +85,7 @@ export async function GET(req: NextRequest) {
   ]);
 
   const disabled = new Set(disabledList ?? []);
-  const links = Object.fromEntries(
+  const links: Record<string, LinkInfo> = Object.fromEntries(
     Object.entries(urls ?? {}).map(([slug, url]) => [
       slug,
       {
@@ -118,6 +110,9 @@ export async function POST(req: NextRequest) {
   const rawUrl = String(body?.url ?? "").trim();
 
   // Validate the URL first (it's free), then resolve the slug.
+  if (rawUrl.length > MAX_URL_LEN) {
+    return bad(`URL is too long (${MAX_URL_LEN} characters max).`);
+  }
   let parsed: URL;
   try {
     parsed = new URL(normalizeUrl(rawUrl));
@@ -135,6 +130,9 @@ export async function POST(req: NextRequest) {
   } else {
     if (!SLUG_RE.test(rawSlug)) {
       return bad("Slug may contain only lowercase letters, numbers, and dashes.");
+    }
+    if (rawSlug.length > MAX_SLUG_LEN) {
+      return bad(`Slug is too long (${MAX_SLUG_LEN} characters max).`);
     }
     if (RESERVED.has(rawSlug)) {
       return bad(`"${rawSlug}" is reserved and can't be used as a slug.`);

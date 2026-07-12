@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      # Dummy values so lib/redis.ts can be imported at build time. Nothing
+      # connects during a build — the client is REST-based and lazy.
+      KV_REST_API_URL: https://ci-dummy.upstash.io
+      KV_REST_API_TOKEN: ci-dummy-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

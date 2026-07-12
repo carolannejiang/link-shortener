@@ -1,5 +1,6 @@
-import { randomBytes } from "crypto";
+import { randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
+import type { AuthenticatorTransportFuture } from "@simplewebauthn/server";
 import { redis } from "@/lib/redis";
 
 // --- Relying Party (this site) -------------------------------------------
@@ -30,11 +31,15 @@ export const RP_NAME = "carolanne.link";
 // (base64url), value = JSON describing the credential.
 const CREDS_KEY = "webauthn:creds";
 
+// Upper bound on a credential's human label, so a hand-crafted request can't
+// stuff the hash with junk.
+export const MAX_LABEL_LEN = 64;
+
 export type StoredCredential = {
   id: string; // base64url credential ID
   publicKey: string; // base64url COSE public key
   counter: number;
-  transports?: string[];
+  transports?: AuthenticatorTransportFuture[];
   label: string; // human label, e.g. "MacBook"
   createdAt: number;
 };

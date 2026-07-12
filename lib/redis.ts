@@ -44,3 +44,7 @@ export const eventsKey = (slug: string) => `events:${slug}`;
 
 // How many recent hits we keep per link.
 export const EVENTS_LIMIT = 500;
+
+// How many of those one stats request returns (newest first). The admin UI
+// shows a slice of these and uses the rest for its breakdowns.
+export const STATS_FETCH_LIMIT = 200;

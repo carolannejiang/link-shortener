@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     // Don't let the same authenticator register twice.
     excludeCredentials: existing.map((c) => ({
       id: c.id,
-      transports: c.transports as never,
+      transports: c.transports,
     })),
     authenticatorSelection: {
       // "platform" = the device's own built-in authenticator (Touch ID on a
@@ -37,7 +37,9 @@ export async function POST(req: NextRequest) {
       // "use your phone or tablet" QR flow.
       authenticatorAttachment: "platform",
       residentKey: "preferred",
-      userVerification: "preferred",
+      // "required": the authenticator must actually verify the person (Touch
+      // ID, Face ID, PIN) — presence of the device alone isn't enough.
+      userVerification: "required",
     },
   });
 
