@@ -6,6 +6,7 @@ import {
   takeChallenge,
   saveCredential,
   toBase64url,
+  MAX_LABEL_LEN,
 } from "@/lib/webauthn";
 
 export const runtime = "nodejs";
@@ -20,7 +21,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const flowId = String(body?.flowId ?? "");
   const response = body?.response;
-  const label = String(body?.label ?? "").trim() || "This device";
+  const label =
+    String(body?.label ?? "").trim().slice(0, MAX_LABEL_LEN) || "This device";
 
   const expectedChallenge = await takeChallenge(flowId);
   if (!expectedChallenge || !response) {

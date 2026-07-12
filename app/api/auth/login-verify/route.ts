@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
         id: cred.id,
         publicKey: fromBase64url(cred.publicKey),
         counter: cred.counter,
-        transports: cred.transports as never,
+        transports: cred.transports,
       },
     });
   } catch {

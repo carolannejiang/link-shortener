@@ -1,21 +1,26 @@
 # carolanne.link — a private link shortener
 
 A tiny Next.js app that turns long URLs into short ones under your own domain
-(e.g. `carolanne.link/career`). One password-protected admin page lets you add
-links from any browser; new links work the instant you save them.
+(e.g. `carolanne.link/career`). One locked admin page lets you add links from
+any browser; new links work the instant you save them. Each link gets a QR
+code, click/scan analytics, a private note, and an on/off switch.
 
-## How it works (the whole thing in four pieces)
+## How it works (the whole thing in five pieces)
 
 1. **`proxy.ts`** runs before every request. For a path like `/career` it looks
-   the slug up in Redis and, if it exists, redirects to the real URL. This is
-   what makes the short links work.
-2. **`app/api/links/route.ts`** is the password-protected API that lists,
-   creates, and deletes links. The password lives in an environment variable
-   (`ADMIN_PASSWORD`) — never in the code.
-3. **`app/admin/page.tsx`** is the page you actually use: type a password, paste
-   a long URL, pick a short name, save.
-4. **Redis** (added through the Vercel Marketplace) stores every link as one
-   `slug → url` pair. It's the only piece that has to remember things.
+   the slug up in Redis and, if it exists, redirects to the real URL (carrying
+   any query params along). It also records each hit — device, browser, rough
+   location, QR vs. direct — after the redirect is already on its way.
+2. **`app/api/links/route.ts`** is the admin-only API that lists, creates,
+   disables, annotates, and deletes links.
+3. **`app/admin/page.tsx`** is the page you actually use: unlock, paste a long
+   URL, pick a short name, save. QR codes, per-link notes, and a stats panel
+   live here too.
+4. **`lib/auth.ts` + `app/api/auth/*`** handle unlocking, with either the
+   `ADMIN_PASSWORD` environment variable (never in the code) or a passkey
+   (Touch ID / Face ID). Both hand out a session cookie so you stay signed in.
+5. **Redis** (added through the Vercel Marketplace) remembers everything:
+   links, counters, notes, sessions, and passkeys.
 
 Nothing here is edge-magic: the slug → URL map is a single Redis hash called
 `links`, and every link is just one field in it.
@@ -80,13 +85,33 @@ npm run dev                           # open http://localhost:3000/admin
 For local use you copy the two Redis values out of the Vercel Storage page into
 `.env.local`. In production you don't — Vercel sets them for you.
 
+## Development
+
+```bash
+npm run lint        # ESLint (Next.js rules)
+npm run typecheck   # tsc --noEmit
+npm test            # vitest unit tests
+```
+
+GitHub Actions runs all three plus `next build` on every push and PR.
+
 ## Good to know
 
 - **Slugs** can contain lowercase letters, numbers, and dashes. `admin` and
-  `api` are reserved so they can't shadow the real pages.
+  `api` are reserved so they can't shadow the real pages. Visitors who type
+  `/Career` still land on `/career` — lookups are case-insensitive.
 - **Redirects are temporary (HTTP 307) on purpose.** That way, if you ever
   repoint `/career` somewhere new, browsers won't keep using a cached old target.
+- **Query params are forwarded.** `carolanne.link/career?utm_source=x` passes
+  `utm_source=x` through to the destination (the internal `src=qr` marker is
+  stripped).
+- **Click counts mean humans.** Link-preview bots (iMessage, Slack, and other
+  unfurlers) still show up in a link's event log, but don't bump its counters.
 - **Saving a slug that already exists overwrites it** — that's how you update a
   link.
-- The only thing protecting your links is `ADMIN_PASSWORD`. Make it long, and if
+- **Unlocking creates a 30-day session**, refreshed every time you use it, so
+  devices you actually use stay signed in. Log out to end one early.
+- Password guesses are rate-limited (10/minute per IP), and passkey unlocks
+  require Touch ID / Face ID / PIN — not just possession of the device.
+- The password is still the root of trust. Make `ADMIN_PASSWORD` long, and if
   you ever think it leaked, change it in Vercel and redeploy.

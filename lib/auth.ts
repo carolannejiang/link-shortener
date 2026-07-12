@@ -1,28 +1,39 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
+import { clientIp, overLimit, strike } from "@/lib/rate-limit";
 
 // Two ways to prove you're the admin:
-//   1. The x-admin-password header (the original, still-supported method).
-//   2. A session cookie, handed out after you unlock with a password or a
+//   1. The x-admin-password header (the original method, still handy for curl).
+//   2. A session cookie, handed out after you unlock with the password or a
 //      passkey (Touch ID / Face ID). Sessions are stored server-side in Redis
 //      so they can expire and be revoked.
 
 const SESSION_COOKIE = "cl_session";
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
-const sessionKey = (token: string) => `webauthn:session:${token}`;
 
-// Constant-time-ish comparison so the password check doesn't leak via timing.
+// A session dies after 30 days *without use* — hasValidSession refreshes the
+// TTL on every hit, so devices you actually use stay signed in.
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+// The cookie deliberately outlives the Redis entry (400 days is the browser
+// cap). Redis is the source of truth for validity; the cookie just carries
+// the token.
+const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 400;
+
+// Wrong password guesses allowed per IP per minute before we stop comparing.
+const MAX_PASSWORD_FAILURES = 10;
+
+const sessionKey = (token: string) => `session:${token}`;
+
+// Compare via fixed-length digests: constant time, and no length leak.
 function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+  return timingSafeEqual(
+    createHash("sha256").update(a).digest(),
+    createHash("sha256").update(b).digest(),
+  );
 }
 
-export function passwordOk(req: NextRequest): boolean {
+function passwordOk(req: NextRequest): boolean {
   const expected = process.env.ADMIN_PASSWORD;
   if (!expected) return false; // never allow access if no password is configured
   const given = req.headers.get("x-admin-password");
@@ -32,13 +43,23 @@ export function passwordOk(req: NextRequest): boolean {
 export async function hasValidSession(req: NextRequest): Promise<boolean> {
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (!token) return false;
-  const exists = await redis.exists(sessionKey(token));
-  return exists === 1;
+  // GETEX reads and refreshes the TTL in one command (sliding expiration).
+  const value = await redis.getex(sessionKey(token), {
+    ex: SESSION_TTL_SECONDS,
+  });
+  return value !== null;
 }
 
 // The single source of truth for "is this request allowed to touch links?"
 export async function authorized(req: NextRequest): Promise<boolean> {
-  if (passwordOk(req)) return true;
+  const given = req.headers.get("x-admin-password");
+  if (given !== null) {
+    const ip = clientIp(req);
+    // Over the failure budget → refuse without even comparing.
+    if (await overLimit("password", ip, MAX_PASSWORD_FAILURES)) return false;
+    if (passwordOk(req)) return true;
+    await strike("password", ip);
+  }
   return hasValidSession(req);
 }
 
@@ -51,7 +72,7 @@ export async function startSession(res: NextResponse): Promise<void> {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: COOKIE_TTL_SECONDS,
   });
 }
 

@@ -1,7 +1,8 @@
-// The homepage, shown only for the bare domain. Real short links never reach
-// it (the proxy redirects them first), and unknown paths render
-// app/not-found.tsx instead.
-export default function Home() {
+// Rendered for any path that isn't a page or a live short link — the proxy
+// redirects real slugs before this ever runs, so what lands here is typos,
+// deleted links, and disabled links. Exactly the moment a human needs a
+// pointer instead of a bare 404.
+export default function NotFound() {
   return (
     <main
       style={{
@@ -9,13 +10,13 @@ export default function Home() {
         display: "grid",
         placeItems: "center",
         padding: "2rem",
-        // Times New Roman is a deliberate touch for the public landing page;
-        // the rest of the site (admin) keeps the default UI sans-serif.
+        // Match the homepage's deliberate Times New Roman touch.
         fontFamily: '"Times New Roman", Times, serif',
       }}
     >
       <p style={{ color: "var(--muted)", textAlign: "center", maxWidth: "28rem" }}>
-        There is nothing here. If you were looking for a link, contact{" "}
+        There is no link here. If one brought you to this page, it may have
+        moved or been switched off — contact{" "}
         <a
           href="https://carolannejiang.com"
           style={{ color: "var(--link)", textDecoration: "none" }}
