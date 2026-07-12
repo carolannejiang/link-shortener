@@ -334,7 +334,7 @@ export default function Admin() {
 
   return (
     <main style={S.page}>
-      <div style={S.card}>
+      <div style={unlocked ? S.card : S.cardNarrow}>
         <div style={S.header}>
           <h1 style={S.h1}>carolanne.link</h1>
           {unlocked && (
@@ -343,6 +343,17 @@ export default function Admin() {
             </button>
           )}
         </div>
+
+        {info && (
+          <p style={S.info} role="status">
+            {info}
+          </p>
+        )}
+        {error && (
+          <p style={S.error} role="alert">
+            {error}
+          </p>
+        )}
 
         {booting ? (
           <p style={S.muted}>Loading…</p>
@@ -386,44 +397,62 @@ export default function Admin() {
             </form>
           </div>
         ) : (
-          <>
-            <section style={S.section}>
-              <h2 style={S.sectionLabel}>New link</h2>
-              <form onSubmit={addLink} style={S.form}>
-                <label style={S.label}>
-                  Destination URL
-                  <input
-                    type="text"
-                    inputMode="url"
-                    placeholder="example.com/a/very/long/url"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    style={S.input}
-                    required
-                  />
-                </label>
-                <label style={S.label}>
-                  Short name (optional)
-                  <div style={S.slugRow}>
-                    <span style={S.slugPrefix}>{host}/</span>
+          <div style={S.columns}>
+            <div style={S.sidebar}>
+              <section style={S.section}>
+                <h2 style={S.sectionLabel}>New link</h2>
+                <form onSubmit={addLink} style={S.form}>
+                  <label style={S.label}>
+                    Destination URL
                     <input
                       type="text"
-                      placeholder="leave blank for a random one"
-                      value={slug}
-                      onChange={(e) =>
-                        setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-                      }
-                      style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                      inputMode="url"
+                      placeholder="example.com/a/very/long/url"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      style={S.input}
+                      required
                     />
-                  </div>
-                </label>
-                <button type="submit" disabled={busy || !url} style={S.primary}>
-                  {busy ? "Saving…" : "Save link"}
-                </button>
-              </form>
-            </section>
+                  </label>
+                  <label style={S.label}>
+                    Short name (optional)
+                    <div style={S.slugRow}>
+                      <span style={S.slugPrefix}>{host}/</span>
+                      <input
+                        type="text"
+                        placeholder="leave blank for a random one"
+                        value={slug}
+                        onChange={(e) =>
+                          setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+                        }
+                        style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                      />
+                    </div>
+                  </label>
+                  <button type="submit" disabled={busy || !url} style={S.primary}>
+                    {busy ? "Saving…" : "Save link"}
+                  </button>
+                </form>
+              </section>
 
-            <section style={S.section}>
+              <div style={S.footer}>
+                <span style={S.muted}>
+                  {hasPasskey
+                    ? "Touch ID is available on registered devices."
+                    : "Skip the password next time:"}
+                </span>
+                <button
+                  type="button"
+                  onClick={setupTouchID}
+                  disabled={busy}
+                  style={S.secondary}
+                >
+                  {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
+                </button>
+              </div>
+            </div>
+
+            <section style={{ ...S.section, ...S.mainCol }}>
               <h2 style={S.sectionLabel}>
                 Links{entries.length > 0 && ` · ${entries.length}`}
               </h2>
@@ -526,34 +555,7 @@ export default function Admin() {
                 </ul>
               )}
             </section>
-
-            <div style={S.footer}>
-              <span style={S.muted}>
-                {hasPasskey
-                  ? "Touch ID is available on registered devices."
-                  : "Skip the password next time:"}
-              </span>
-              <button
-                type="button"
-                onClick={setupTouchID}
-                disabled={busy}
-                style={S.secondary}
-              >
-                {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
-              </button>
-            </div>
-          </>
-        )}
-
-        {info && (
-          <p style={S.info} role="status">
-            {info}
-          </p>
-        )}
-        {error && (
-          <p style={S.error} role="alert">
-            {error}
-          </p>
+          </div>
         )}
       </div>
     </main>

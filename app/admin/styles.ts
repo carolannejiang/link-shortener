@@ -8,15 +8,33 @@ export const S: Record<string, CSSProperties> = {
     minHeight: "100dvh",
     display: "grid",
     placeItems: "start center",
-    padding: "min(8vh, 4rem) 1rem",
+    padding: "min(5vh, 2.5rem) 1.25rem",
   },
-  card: { width: "100%", maxWidth: 560 },
+  // Wide card for the unlocked two-column admin; narrow one for the lock
+  // screen, where full-width inputs would look silly.
+  card: { width: "100%", maxWidth: 1080 },
+  cardNarrow: { width: "100%", maxWidth: 560 },
   header: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    margin: "0 0 1.5rem",
+    margin: "0 0 1.25rem",
   },
+  // Sidebar (new-link form + Touch ID) beside the links list on a laptop;
+  // flex-wrap stacks them back into one column on narrow screens.
+  columns: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    gap: "2rem 3rem",
+  },
+  sidebar: {
+    flex: "1 1 260px",
+    minWidth: 0,
+    display: "grid",
+    gap: "1.5rem",
+  },
+  mainCol: { flex: "2 1 340px", minWidth: 0 },
   h1: { fontSize: "1.5rem", fontWeight: 600, margin: 0 },
   form: { display: "grid", gap: "1rem" },
   label: {
@@ -87,7 +105,7 @@ export const S: Record<string, CSSProperties> = {
     background: "var(--bg)",
     padding: "0 .6rem",
   },
-  section: { marginBottom: "1.75rem" },
+  section: { margin: 0, minWidth: 0 },
   sectionLabel: {
     fontSize: ".7rem",
     fontWeight: 700,
@@ -106,12 +124,12 @@ export const S: Record<string, CSSProperties> = {
     borderTop: "1px solid var(--border)",
     fontSize: ".85rem",
   },
-  list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".5rem" },
+  list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".45rem" },
   item: {
     display: "flex",
     flexDirection: "column",
-    gap: ".55rem",
-    padding: ".75rem .85rem",
+    gap: ".5rem",
+    padding: ".6rem .75rem",
     border: "1px solid var(--border)",
     borderRadius: 8,
   },
@@ -185,8 +203,8 @@ export const S: Record<string, CSSProperties> = {
   },
   actions: { display: "flex", gap: ".4rem", flexShrink: 0 },
   secondaryBtn: {
-    padding: ".4rem .6rem",
-    fontSize: ".8rem",
+    padding: ".3rem .55rem",
+    fontSize: ".75rem",
     color: "var(--fg)",
     background: "transparent",
     border: "1px solid var(--border)",
@@ -226,8 +244,8 @@ export const S: Record<string, CSSProperties> = {
   },
   delete: {
     flexShrink: 0,
-    padding: ".4rem .6rem",
-    fontSize: ".8rem",
+    padding: ".3rem .55rem",
+    fontSize: ".75rem",
     color: "var(--danger)",
     background: "transparent",
     border: "1px solid var(--border)",
@@ -235,8 +253,10 @@ export const S: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
   muted: { color: "var(--muted)" },
+  // Status banners sit under the header, above both columns, so feedback
+  // stays visible no matter how long the links list gets.
   info: {
-    marginTop: "1rem",
+    margin: "0 0 1.25rem",
     padding: ".6rem .75rem",
     fontSize: ".9rem",
     color: "var(--accent)",
@@ -244,7 +264,7 @@ export const S: Record<string, CSSProperties> = {
     borderRadius: 8,
   },
   error: {
-    marginTop: "1rem",
+    margin: "0 0 1.25rem",
     padding: ".6rem .75rem",
     fontSize: ".9rem",
     color: "var(--danger)",
