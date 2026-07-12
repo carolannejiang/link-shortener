@@ -19,6 +19,14 @@ function shortHost() {
   return "carolanne.link";
 }
 
+// The destination as shown in the links list: scheme stripped and capped, so
+// a long URL doesn't dominate the row. Hovering the row (title attribute)
+// still reveals the full URL.
+function compactUrl(url: string, max = 60): string {
+  const bare = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  return bare.length > max ? `${bare.slice(0, max - 1)}…` : bare;
+}
+
 // A friendly label for the passkey we're about to create, based on the device.
 function deviceLabel() {
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
@@ -479,7 +487,7 @@ export default function Admin() {
                         </span>
                       </div>
                       <div style={S.dest} title={u.url}>
-                        → {u.url}
+                        → {compactUrl(u.url)}
                       </div>
                       {u.note && <div style={S.note}>📝 {u.note}</div>}
                       <div style={S.toolbar}>
