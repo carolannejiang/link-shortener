@@ -17,7 +17,9 @@ import { SLUG_RE, MAX_SLUG_LEN, type HitEvent } from "@/lib/links";
 // Bots extension adds the crawler signatures on top of the default matchers.
 function parseUa(ua: string): Pick<HitEvent, "device" | "os" | "browser" | "model"> {
   const r = new UAParser(ua, Bots).getResult();
-  const isBot = r.browser.type === "crawler";
+  // The Bots extension tags search engines as "crawler" and link unfurlers
+  // (Slackbot, WhatsApp, iMessage previews, …) as "fetcher" — both are bots.
+  const isBot = r.browser.type === "crawler" || r.browser.type === "fetcher";
   const join = (...parts: (string | undefined)[]) =>
     parts.filter(Boolean).join(" ") || undefined;
   return {
