@@ -91,11 +91,10 @@ export async function storeChallenge(challenge: string): Promise<string> {
 }
 
 // Fetch and consume (delete) the challenge for a flow. Null if expired/unknown.
+// GETDEL is atomic, so two concurrent verify attempts can never both get the
+// same challenge — the loser sees null and fails cleanly.
 export async function takeChallenge(flowId: string): Promise<string | null> {
-  const key = challengeKey(flowId);
-  const challenge = await redis.get<string>(key);
-  if (challenge) await redis.del(key);
-  return challenge;
+  return redis.getdel<string>(challengeKey(flowId));
 }
 
 // --- base64url <-> bytes helpers -----------------------------------------

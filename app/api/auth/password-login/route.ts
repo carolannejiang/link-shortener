@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorized, startSession } from "@/lib/auth";
+import { unauthorized } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -9,7 +10,7 @@ export async function POST(req: NextRequest) {
   if (!(await authorized(req))) {
     // Also returned when the caller is over the guess rate limit — we don't
     // distinguish, to keep the lock screen simple.
-    return NextResponse.json({ error: "Wrong password." }, { status: 401 });
+    return unauthorized("Wrong password.");
   }
   const res = NextResponse.json({ ok: true });
   await startSession(res);

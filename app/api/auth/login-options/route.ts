@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { relyingParty, listCredentials, storeChallenge } from "@/lib/webauthn";
 import { clientIp, strike } from "@/lib/rate-limit";
+import { bad, tooMany } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -13,20 +14,14 @@ export async function POST(req: NextRequest) {
   // This endpoint writes a challenge to Redis on every call, so cap how fast
   // one address can spin them up.
   if ((await strike("login-options", clientIp(req))) > OPTIONS_PER_MINUTE) {
-    return NextResponse.json(
-      { error: "Too many attempts. Try again in a minute." },
-      { status: 429 },
-    );
+    return tooMany();
   }
 
   const { rpID } = relyingParty(req);
   const creds = await listCredentials();
 
   if (creds.length === 0) {
-    return NextResponse.json(
-      { error: "No passkeys registered yet." },
-      { status: 400 },
-    );
+    return bad("No passkeys registered yet.");
   }
 
   const options = await generateAuthenticationOptions({

@@ -77,13 +77,24 @@ slug `career`, destination your long URL. Then open `carolanne.link/career`. Don
 ## Running it on your own computer (optional)
 
 ```bash
-cp .env.local.example .env.local      # then fill in the 3 values
 npm install
-npm run dev                           # open http://localhost:3000/admin
+cp .env.local.example .env.local      # then fill in the 3 values (see below)
+node scripts/local-redis.mjs          # terminal 1: throwaway in-memory Redis
+npm run dev                           # terminal 2: open http://localhost:3000/admin
 ```
 
-For local use you copy the two Redis values out of the Vercel Storage page into
-`.env.local`. In production you don't — Vercel sets them for you.
+`ADMIN_PASSWORD` is whatever you like. For the two Redis values, either point
+at the local stand-in started above (no account needed; data resets when it
+restarts):
+
+```
+KV_REST_API_URL=http://127.0.0.1:8079
+KV_REST_API_TOKEN=anything
+```
+
+or copy the real values out of the Vercel Storage page to work against the
+production database. In production itself you set neither — Vercel provides
+them.
 
 ## Development
 

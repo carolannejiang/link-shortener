@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRegistrationResponse } from "@simplewebauthn/server";
+import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { authorized, startSession } from "@/lib/auth";
+import { bad, readJson, unauthorized } from "@/lib/api";
 import {
   relyingParty,
   takeChallenge,
@@ -14,11 +16,13 @@ export const runtime = "nodejs";
 // Step 2 of adding a passkey: verify what the browser produced, store the
 // credential, and log this device in.
 export async function POST(req: NextRequest) {
-  if (!(await authorized(req))) {
-    return NextResponse.json({ error: "Not authorized." }, { status: 401 });
-  }
+  if (!(await authorized(req))) return unauthorized();
 
-  const body = await req.json().catch(() => null);
+  const body = await readJson<{
+    flowId?: unknown;
+    response?: RegistrationResponseJSON;
+    label?: unknown;
+  }>(req);
   const flowId = String(body?.flowId ?? "");
   const response = body?.response;
   const label =
@@ -26,10 +30,7 @@ export async function POST(req: NextRequest) {
 
   const expectedChallenge = await takeChallenge(flowId);
   if (!expectedChallenge || !response) {
-    return NextResponse.json(
-      { error: "Registration expired. Try again." },
-      { status: 400 },
-    );
+    return bad("Registration expired. Try again.");
   }
 
   const { rpID, origin } = relyingParty(req);
@@ -43,17 +44,11 @@ export async function POST(req: NextRequest) {
       expectedRPID: rpID,
     });
   } catch {
-    return NextResponse.json(
-      { error: "Could not verify this passkey." },
-      { status: 400 },
-    );
+    return bad("Could not verify this passkey.");
   }
 
   if (!verification.verified || !verification.registrationInfo) {
-    return NextResponse.json(
-      { error: "Passkey verification failed." },
-      { status: 400 },
-    );
+    return bad("Passkey verification failed.");
   }
 
   const { credential } = verification.registrationInfo;

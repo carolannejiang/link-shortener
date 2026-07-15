@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { startSession } from "@/lib/auth";
+import { bad, readJson, unauthorized } from "@/lib/api";
 import {
   relyingParty,
   takeChallenge,
@@ -14,24 +16,21 @@ export const runtime = "nodejs";
 // Step 2 of a passkey login: verify the browser's assertion and, if good,
 // hand out a session cookie.
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
+  const body = await readJson<{
+    flowId?: unknown;
+    response?: AuthenticationResponseJSON;
+  }>(req);
   const flowId = String(body?.flowId ?? "");
   const response = body?.response;
 
   const expectedChallenge = await takeChallenge(flowId);
   if (!expectedChallenge || !response?.id) {
-    return NextResponse.json(
-      { error: "Login expired. Try again." },
-      { status: 400 },
-    );
+    return bad("Login expired. Try again.");
   }
 
   const cred = await getCredential(response.id);
   if (!cred) {
-    return NextResponse.json(
-      { error: "Unknown passkey." },
-      { status: 400 },
-    );
+    return bad("Unknown passkey.");
   }
 
   const { rpID, origin } = relyingParty(req);
@@ -51,17 +50,11 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch {
-    return NextResponse.json(
-      { error: "Could not verify this passkey." },
-      { status: 400 },
-    );
+    return bad("Could not verify this passkey.");
   }
 
   if (!verification.verified) {
-    return NextResponse.json(
-      { error: "Passkey verification failed." },
-      { status: 401 },
-    );
+    return unauthorized("Passkey verification failed.");
   }
 
   await updateCounter(cred.id, verification.authenticationInfo.newCounter);

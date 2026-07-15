@@ -5,8 +5,9 @@
 // Lowercase letters, numbers, and dashes only.
 export const SLUG_RE = /^[a-z0-9-]+$/;
 
-// Slugs that must never be turned into short links, because they'd shadow the
-// real pages/routes of this app.
+// The app's own routes: the links API refuses to create these as slugs, and
+// the proxy passes them straight through without a Redis lookup. One set,
+// used by both, so adding a route here is the whole job.
 export const RESERVED = new Set(["admin", "api"]);
 
 // Upper bounds on stored fields, so a stray paste can't bloat the Redis

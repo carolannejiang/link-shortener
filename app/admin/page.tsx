@@ -110,7 +110,11 @@ export default function Admin() {
           fetch("/api/auth/status"),
           fetch("/api/links"),
         ]);
-        const status = await statusRes.json().catch(() => ({}));
+        // Only trust the body of an OK response — a 429/500 error body must
+        // not be mistaken for "no passkey, not signed in".
+        const status = statusRes.ok
+          ? await statusRes.json().catch(() => ({}))
+          : {};
         setHasPasskey(Boolean(status.hasPasskey));
         if (status.authenticated && linksRes.ok) {
           const data = await linksRes.json().catch(() => ({}));
@@ -152,7 +156,7 @@ export default function Admin() {
     setBusy(true);
     try {
       const optRes = await fetch("/api/auth/login-options", { method: "POST" });
-      const optData = await optRes.json();
+      const optData = await optRes.json().catch(() => ({}));
       if (!optRes.ok) throw new Error(optData.error ?? "Couldn't start login.");
 
       const assertion = await startAuthentication({ optionsJSON: optData.options });
@@ -162,7 +166,7 @@ export default function Admin() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ flowId: optData.flowId, response: assertion }),
       });
-      const verData = await verRes.json();
+      const verData = await verRes.json().catch(() => ({}));
       if (!verRes.ok || !verData.verified) {
         throw new Error(verData.error ?? "Passkey login failed.");
       }
@@ -184,7 +188,7 @@ export default function Admin() {
         method: "POST",
         headers: authHeaders(),
       });
-      const optData = await optRes.json();
+      const optData = await optRes.json().catch(() => ({}));
       if (!optRes.ok) throw new Error(optData.error ?? "Couldn't start setup.");
 
       const attestation = await startRegistration({ optionsJSON: optData.options });
@@ -198,7 +202,7 @@ export default function Admin() {
           label: deviceLabel(),
         }),
       });
-      const verData = await verRes.json();
+      const verData = await verRes.json().catch(() => ({}));
       if (!verRes.ok || !verData.verified) {
         throw new Error(verData.error ?? "Passkey setup failed.");
       }

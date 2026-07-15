@@ -9,6 +9,7 @@
 //   KV_REST_API_TOKEN=anything
 
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.PORT ?? 8079);
 
@@ -66,6 +67,12 @@ function exec([cmd, ...args]) {
         if (String(opts[i]).toUpperCase() === "EX")
           e.expireAt = Date.now() + Number(opts[i + 1]) * 1000;
       }
+      return e.v;
+    }
+    case "GETDEL": {
+      const e = get(args[0]);
+      if (!e) return null;
+      store.delete(args[0]);
       return e.v;
     }
     case "DEL": {
@@ -172,34 +179,40 @@ function encode(x) {
   return x;
 }
 
-const server = http.createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => (body += c));
-  req.on("end", () => {
-    res.setHeader("content-type", "application/json");
-    const wantB64 = req.headers["upstash-encoding"] === "base64";
-    const wrap = (x) => (wantB64 ? encode(x) : x);
-    try {
-      const payload = JSON.parse(body || "[]");
-      if (req.url?.startsWith("/pipeline") || req.url?.startsWith("/multi-exec")) {
-        const results = payload.map((cmd) => {
-          try {
-            return { result: wrap(exec(cmd)) };
-          } catch (err) {
-            return { error: String(err.message ?? err) };
-          }
-        });
-        res.end(JSON.stringify(results));
-      } else {
-        res.end(JSON.stringify({ result: wrap(exec(payload)) }));
+// The unit tests import this to run the same shim on an ephemeral port.
+export function createLocalRedis() {
+  return http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      const wantB64 = req.headers["upstash-encoding"] === "base64";
+      const wrap = (x) => (wantB64 ? encode(x) : x);
+      try {
+        const payload = JSON.parse(body || "[]");
+        if (req.url?.startsWith("/pipeline") || req.url?.startsWith("/multi-exec")) {
+          const results = payload.map((cmd) => {
+            try {
+              return { result: wrap(exec(cmd)) };
+            } catch (err) {
+              return { error: String(err.message ?? err) };
+            }
+          });
+          res.end(JSON.stringify(results));
+        } else {
+          res.end(JSON.stringify({ result: wrap(exec(payload)) }));
+        }
+      } catch (err) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: String(err.message ?? err) }));
       }
-    } catch (err) {
-      res.statusCode = 400;
-      res.end(JSON.stringify({ error: String(err.message ?? err) }));
-    }
+    });
   });
-});
+}
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`local-redis shim listening on http://127.0.0.1:${PORT}`);
-});
+// Started directly (`node scripts/local-redis.mjs`) → serve on the fixed port.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  createLocalRedis().listen(PORT, "127.0.0.1", () => {
+    console.log(`local-redis shim listening on http://127.0.0.1:${PORT}`);
+  });
+}

@@ -19,6 +19,7 @@ import {
   type LinkInfo,
 } from "@/lib/links";
 import { authorized } from "@/lib/auth";
+import { bad, readJson, unauthorized } from "@/lib/api";
 
 export const runtime = "nodejs";
 
@@ -42,14 +43,6 @@ async function uniqueSlug(): Promise<string> {
     if (!(await redis.hexists(LINKS_KEY, candidate))) return candidate;
   }
   return randomSlug(10);
-}
-
-function unauthorized() {
-  return NextResponse.json({ error: "Not authorized." }, { status: 401 });
-}
-
-function bad(message: string) {
-  return NextResponse.json({ error: message }, { status: 400 });
 }
 
 function safeParse(s: string): unknown {
@@ -105,7 +98,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
-  const body = await req.json().catch(() => null);
+  const body = await readJson(req);
   const rawSlug = String(body?.slug ?? "").trim().toLowerCase();
   const rawUrl = String(body?.url ?? "").trim();
 
@@ -156,7 +149,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
-  const body = await req.json().catch(() => null);
+  const body = await readJson(req);
   const slug = String(body?.slug ?? "").trim().toLowerCase();
   if (!slug) return bad("Missing slug.");
   if (!(await redis.hexists(LINKS_KEY, slug))) return bad("No such link.");
@@ -190,7 +183,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
-  const body = await req.json().catch(() => null);
+  const body = await readJson(req);
   const slug = String(body?.slug ?? "").trim().toLowerCase();
   if (!slug) return bad("Missing slug.");
 

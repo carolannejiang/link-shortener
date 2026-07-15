@@ -10,7 +10,7 @@ import {
   eventsKey,
   EVENTS_LIMIT,
 } from "@/lib/redis";
-import { SLUG_RE, MAX_SLUG_LEN, type HitEvent } from "@/lib/links";
+import { SLUG_RE, RESERVED, MAX_SLUG_LEN, type HitEvent } from "@/lib/links";
 
 // Full user-agent parse: precise browser/OS versions, device vendor + model,
 // and crawler detection (bots come back with browser.type === "crawler"). The
@@ -103,8 +103,11 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
 
   if (!slug) return NextResponse.next(); // homepage
 
-  // Paths that can't possibly be a slug skip the Redis lookup entirely.
-  if (slug.length > MAX_SLUG_LEN || !SLUG_RE.test(slug)) {
+  // Paths that can't possibly be a slug — too long, bad characters (which
+  // covers nested paths like /api/links), or a reserved route name — skip the
+  // Redis lookup entirely. RESERVED is the same set the links API enforces at
+  // creation, so the two can't drift.
+  if (slug.length > MAX_SLUG_LEN || !SLUG_RE.test(slug) || RESERVED.has(slug)) {
     return NextResponse.next();
   }
 
@@ -156,10 +159,11 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
   return NextResponse.redirect(dest, 307);
 }
 
-// Don't run the proxy on framework internals, the admin UI, the API, or any
-// path containing a dot (favicon.ico, wp-login.php probes, … — real slugs
-// never contain one). "admin" is anchored so slugs that merely start with it
-// (e.g. /admin-panel) still resolve.
+// Don't run the proxy on framework internals or any path containing a dot
+// (favicon.ico, wp-login.php probes, … — real slugs never contain one). The
+// matcher must be a static literal, so the app's own routes (/admin, /api)
+// are excluded by the RESERVED check in code above instead of being repeated
+// here.
 export const config = {
-  matcher: ["/((?!_next/|admin$|api$|api/)[^.]*)"],
+  matcher: ["/((?!_next/)[^.]*)"],
 };

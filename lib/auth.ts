@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { clientIp, overLimit, strike } from "@/lib/rate-limit";
+import { clearStrikes, clientIp, strike } from "@/lib/rate-limit";
 
 // Two ways to prove you're the admin:
 //   1. The x-admin-password header (the original method, still handy for curl).
@@ -20,7 +20,8 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 // the token.
 const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 400;
 
-// Wrong password guesses allowed per IP per minute before we stop comparing.
+// Password attempts allowed per IP per minute before we stop comparing. A
+// correct password resets the window, so only failed guesses ever accumulate.
 const MAX_PASSWORD_FAILURES = 10;
 
 const sessionKey = (token: string) => `session:${token}`;
@@ -55,10 +56,14 @@ export async function authorized(req: NextRequest): Promise<boolean> {
   const given = req.headers.get("x-admin-password");
   if (given !== null) {
     const ip = clientIp(req);
-    // Over the failure budget → refuse without even comparing.
-    if (await overLimit("password", ip, MAX_PASSWORD_FAILURES)) return false;
-    if (passwordOk(req)) return true;
-    await strike("password", ip);
+    // Count the attempt *before* comparing, so a burst of concurrent guesses
+    // can't all slip past the budget check before any strike lands. Over the
+    // budget → refuse without even comparing.
+    if ((await strike("password", ip)) > MAX_PASSWORD_FAILURES) return false;
+    if (passwordOk(req)) {
+      await clearStrikes("password", ip);
+      return true;
+    }
   }
   return hasValidSession(req);
 }

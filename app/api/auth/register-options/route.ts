@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
 import { authorized } from "@/lib/auth";
+import { clientIp, strike } from "@/lib/rate-limit";
+import { tooMany, unauthorized } from "@/lib/api";
 import {
   relyingParty,
   RP_NAME,
@@ -10,12 +12,18 @@ import {
 
 export const runtime = "nodejs";
 
+// Challenge starts allowed per IP per minute — same budget as login-options.
+const OPTIONS_PER_MINUTE = 10;
+
 // Step 1 of adding a passkey. Only an already-authenticated admin (password or
 // existing session) can register a new device.
 export async function POST(req: NextRequest) {
-  if (!(await authorized(req))) {
-    return NextResponse.json({ error: "Not authorized." }, { status: 401 });
+  // Like login-options, every call writes a challenge to Redis, so cap how
+  // fast one address can spin them up — even one holding a valid session.
+  if ((await strike("register-options", clientIp(req))) > OPTIONS_PER_MINUTE) {
+    return tooMany();
   }
+  if (!(await authorized(req))) return unauthorized();
 
   const { rpID } = relyingParty(req);
   const existing = await listCredentials();
