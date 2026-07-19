@@ -252,6 +252,29 @@ export const S: Record<string, CSSProperties> = {
     borderRadius: 4,
     padding: "0 .35rem",
   },
+  // Marks an archived link once the archived section is shown — muted, since
+  // archiving is tidying, not a warning.
+  archivedTag: {
+    fontSize: ".7rem",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: ".03em",
+    color: "var(--muted)",
+    border: "1px solid var(--border)",
+    borderRadius: 4,
+    padding: "0 .35rem",
+  },
+  // Reveals/hides the archived links at the bottom of the list.
+  archiveToggle: {
+    marginTop: ".6rem",
+    padding: ".3rem 0",
+    fontSize: ".8rem",
+    color: "var(--muted)",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    textAlign: "left",
+  },
   disabledTag: {
     fontSize: ".7rem",
     fontWeight: 600,

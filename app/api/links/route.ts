@@ -6,6 +6,7 @@ import {
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
+  ARCHIVED_KEY,
   NOTES_KEY,
   CREATED_KEY,
   eventsKey,
@@ -77,18 +78,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ slug: statsSlug, events });
   }
 
-  const [urls, aliases, clicks, scans, disabledList, notes, created] =
+  const [urls, aliases, clicks, scans, disabledList, archivedList, notes, created] =
     await Promise.all([
       redis.hgetall<Record<string, string>>(LINKS_KEY),
       redis.hgetall<Record<string, string>>(ALIASES_KEY),
       redis.hgetall<Record<string, number>>(CLICKS_KEY),
       redis.hgetall<Record<string, number>>(SCANS_KEY),
       redis.smembers(DISABLED_KEY),
+      redis.smembers(ARCHIVED_KEY),
       redis.hgetall<Record<string, string>>(NOTES_KEY),
       redis.hgetall<Record<string, number>>(CREATED_KEY),
     ]);
 
   const disabled = new Set(disabledList ?? []);
+  const archived = new Set(archivedList ?? []);
   const links: Record<string, LinkInfo> = Object.fromEntries(
     Object.entries(urls ?? {}).map(([slug, url]) => [
       slug,
@@ -97,6 +100,7 @@ export async function GET(req: NextRequest) {
         clicks: Number(clicks?.[slug] ?? 0),
         scans: Number(scans?.[slug] ?? 0),
         disabled: disabled.has(slug),
+        archived: archived.has(slug),
         note: notes?.[slug] ?? "",
         created: Number(created?.[slug] ?? 0),
       },
@@ -111,6 +115,7 @@ export async function GET(req: NextRequest) {
       clicks: Number(clicks?.[slug] ?? 0),
       scans: Number(scans?.[slug] ?? 0),
       disabled: disabled.has(slug),
+      archived: archived.has(slug),
       note: notes?.[slug] ?? "",
       created: Number(created?.[slug] ?? 0),
       aliasOf: target,
@@ -185,13 +190,14 @@ export async function POST(req: NextRequest) {
       redis.hset(ALIASES_KEY, { [slug]: target }),
       redis.hdel(LINKS_KEY, slug),
       redis.srem(DISABLED_KEY, slug),
+      redis.srem(ARCHIVED_KEY, slug),
       redis.hsetnx(CREATED_KEY, slug, Date.now()),
     ]);
     return NextResponse.json({ ok: true, slug, aliasOf: target, url: targetUrl });
   }
 
-  // Saving a link (re)activates it — clear any leftover disabled flag so an
-  // overwrite of a disabled slug starts working again. Dropping any alias
+  // Saving a link (re)activates it — clear any leftover disabled or archived
+  // flag so an overwrite of a dormant slug starts fresh. Dropping any alias
   // pointer turns a combined link back into a regular one, and HSETNX stamps
   // the creation date only the first time the slug appears. The writes are
   // independent, so issue them together (one batched round trip).
@@ -199,6 +205,7 @@ export async function POST(req: NextRequest) {
     redis.hset(LINKS_KEY, { [slug]: parsed!.toString() }),
     redis.hdel(ALIASES_KEY, slug),
     redis.srem(DISABLED_KEY, slug),
+    redis.srem(ARCHIVED_KEY, slug),
     redis.hsetnx(CREATED_KEY, slug, Date.now()),
   ]);
   return NextResponse.json({ ok: true, slug, url: parsed!.toString() });
@@ -229,6 +236,14 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
+  let archived: boolean | undefined;
+  if (typeof body?.archived === "boolean") {
+    archived = body.archived;
+    writes.push(
+      archived ? redis.sadd(ARCHIVED_KEY, slug) : redis.srem(ARCHIVED_KEY, slug),
+    );
+  }
+
   let note: string | undefined;
   if (typeof body?.note === "string") {
     note = body.note.trim().slice(0, MAX_NOTE_LEN);
@@ -241,7 +256,7 @@ export async function PATCH(req: NextRequest) {
   // Independent writes → auto-pipelining folds them into one round trip.
   await Promise.all(writes);
 
-  return NextResponse.json({ ok: true, slug, disabled, note });
+  return NextResponse.json({ ok: true, slug, disabled, archived, note });
 }
 
 // Delete a link by slug, along with its counters, note, and event log. Any
@@ -266,6 +281,7 @@ export async function DELETE(req: NextRequest) {
       redis.hdel(CLICKS_KEY, s),
       redis.hdel(SCANS_KEY, s),
       redis.srem(DISABLED_KEY, s),
+      redis.srem(ARCHIVED_KEY, s),
       redis.hdel(NOTES_KEY, s),
       redis.hdel(CREATED_KEY, s),
       redis.del(eventsKey(s)),

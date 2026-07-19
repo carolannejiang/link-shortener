@@ -45,6 +45,9 @@ export type LinkInfo = {
   clicks: number;
   scans: number;
   disabled: boolean;
+  // Archived links still redirect — they're just collapsed out of the admin's
+  // main list. Independent of `disabled`, which actually turns a link off.
+  archived: boolean;
   note: string;
   // Unix ms when the slug was first created; 0 for links that predate
   // creation-date tracking.

@@ -100,6 +100,7 @@ export default function Admin() {
   const [statsError, setStatsError] = useState<Record<string, boolean>>({});
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   // Remember the chosen ordering across visits. The links list only renders
   // after a client-side unlock, so the prerender never sees this value and
   // reading localStorage in the initializer is hydration-safe.
@@ -300,6 +301,7 @@ export default function Admin() {
           clicks: prev[data.slug]?.clicks ?? 0,
           scans: prev[data.slug]?.scans ?? 0,
           disabled: false,
+          archived: false,
           note: prev[data.slug]?.note ?? "",
           created: prev[data.slug]?.created || Date.now(),
           aliasOf: data.aliasOf,
@@ -364,6 +366,21 @@ export default function Admin() {
     }
   }
 
+  // Archive or restore a link. Archiving is purely cosmetic — the link keeps
+  // redirecting; it's just moved into the collapsed section of the list.
+  async function toggleArchive(s: string, archived: boolean) {
+    setError("");
+    setBusy(true);
+    try {
+      await api("PATCH", { slug: s, archived });
+      setLinks((prev) => ({ ...prev, [s]: { ...prev[s], archived } }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleLink(s: string, disabled: boolean) {
     setError("");
     setBusy(true);
@@ -406,6 +423,11 @@ export default function Admin() {
 
   const host = shortHost();
   const entries = Object.entries(links).sort(compareLinks(sortBy));
+  const active = entries.filter(([, u]) => !u.archived);
+  const archivedEntries = entries.filter(([, u]) => u.archived);
+  // Archived links render in the same list, after the active ones, once the
+  // "Show archived" toggle below the list is switched on.
+  const visible = showArchived ? [...active, ...archivedEntries] : active;
 
   return (
     <main style={S.page}>
@@ -577,7 +599,7 @@ export default function Admin() {
             <section style={{ ...S.section, ...S.mainCol }}>
               <div style={S.listHeader}>
                 <h2 style={{ ...S.sectionLabel, margin: 0 }}>
-                  Links{entries.length > 0 && ` · ${entries.length}`}
+                  Links{active.length > 0 && ` · ${active.length}`}
                 </h2>
                 {entries.length > 1 && (
                   <label style={S.sortLabel}>
@@ -599,9 +621,16 @@ export default function Admin() {
               {entries.length === 0 ? (
                 <p style={S.muted}>No links yet — add one above to get started.</p>
               ) : (
+                <>
+                {active.length === 0 && !showArchived && (
+                  <p style={S.muted}>No active links — everything is archived.</p>
+                )}
                 <ul style={S.list}>
-                  {entries.map(([s, u]) => (
-                    <li key={s} style={{ ...S.item, opacity: u.disabled ? 0.6 : 1 }}>
+                  {visible.map(([s, u]) => (
+                    <li
+                      key={s}
+                      style={{ ...S.item, opacity: u.disabled || u.archived ? 0.6 : 1 }}
+                    >
                       <div style={S.itemHead}>
                         <a
                           href={`/${s}`}
@@ -613,6 +642,7 @@ export default function Admin() {
                         </a>
                         {u.aliasOf && <span style={S.aliasTag}>combined</span>}
                         {u.disabled && <span style={S.disabledTag}>disabled</span>}
+                        {u.archived && <span style={S.archivedTag}>archived</span>}
                         <span style={S.clicks}>
                           {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
                           {u.scans > 0 &&
@@ -660,6 +690,14 @@ export default function Admin() {
                           {u.disabled ? "Enable" : "Disable"}
                         </button>
                         <button
+                          onClick={() => toggleArchive(s, !u.archived)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${u.archived ? "Unarchive" : "Archive"} ${s}`}
+                        >
+                          {u.archived ? "Unarchive" : "Archive"}
+                        </button>
+                        <button
                           onClick={() => removeLink(s)}
                           disabled={busy}
                           style={{ ...S.delete, marginLeft: "auto" }}
@@ -697,6 +735,16 @@ export default function Admin() {
                     </li>
                   ))}
                 </ul>
+                {archivedEntries.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowArchived((v) => !v)}
+                    style={S.archiveToggle}
+                  >
+                    {showArchived ? "Hide" : "Show"} archived · {archivedEntries.length}
+                  </button>
+                )}
+                </>
               )}
             </section>
           </div>

@@ -36,6 +36,11 @@ export const SCANS_KEY = "scans";
 // every alias with it. The target slug keeps working as itself.
 export const ALIASES_KEY = "aliases";
 
+// Archived links, kept as a set of slugs. Archiving only tidies the admin —
+// an archived link still redirects and still counts hits; it's just tucked
+// into a collapsed section of the list. Disabling is what turns a link off.
+export const ARCHIVED_KEY = "archived";
+
 // Disabled links, kept as a set of slugs. A slug in this set still exists (URL
 // and click count are preserved) but the proxy refuses to redirect it.
 export const DISABLED_KEY = "disabled";
