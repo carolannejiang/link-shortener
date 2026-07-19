@@ -40,6 +40,11 @@ export const ALIASES_KEY = "aliases";
 // and click count are preserved) but the proxy refuses to redirect it.
 export const DISABLED_KEY = "disabled";
 
+// When each slug was first created, kept in a parallel hash: field = slug,
+// value = unix ms. Written with HSETNX so overwriting a link's URL keeps the
+// original date. Links made before this hash existed simply have no entry.
+export const CREATED_KEY = "created";
+
 // Private, admin-only notes about a link, kept in a parallel hash: field =
 // slug, value = free-text note. Never shown to visitors — only in the admin.
 export const NOTES_KEY = "notes";

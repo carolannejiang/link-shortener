@@ -105,6 +105,12 @@ function exec([cmd, ...args]) {
       }
       return added;
     }
+    case "HSETNX": {
+      const e = ensure(args[0], "hash", () => new Map());
+      if (e.v.has(args[1])) return 0;
+      e.v.set(args[1], args[2]);
+      return 1;
+    }
     case "HGET":
       return get(args[0])?.v.get(args[1]) ?? null;
     case "HGETALL": {

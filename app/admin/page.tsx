@@ -12,6 +12,37 @@ import { S } from "./styles";
 
 type Links = Record<string, LinkInfo>;
 
+// Orderings for the links list. Each maps to a comparator below; ties (and
+// links created before dates were tracked) fall back to name order.
+const SORTS = {
+  newest: "Newest",
+  name: "Name",
+  clicks: "Clicks",
+  scans: "Scans",
+} as const;
+type SortKey = keyof typeof SORTS;
+
+function compareLinks(sortBy: SortKey) {
+  return ([aSlug, a]: [string, LinkInfo], [bSlug, b]: [string, LinkInfo]) => {
+    if (sortBy === "newest" && b.created !== a.created) return b.created - a.created;
+    if (sortBy === "clicks" && b.clicks !== a.clicks) return b.clicks - a.clicks;
+    if (sortBy === "scans" && b.scans !== a.scans) return b.scans - a.scans;
+    return aSlug.localeCompare(bSlug);
+  };
+}
+
+// Short created-date label for a list row, e.g. "Jul 18" or "Jul 2025" once
+// it's a year old. Links that predate date tracking have created === 0.
+function createdLabel(ms: number): string | null {
+  if (!ms) return null;
+  const d = new Date(ms);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    ...(sameYear ? { day: "numeric" } : { year: "numeric" }),
+  });
+}
+
 // The short-link domain, used only to render previews like carolanne.link/career.
 // Falls back to the production domain during prerendering.
 function shortHost() {
@@ -69,6 +100,19 @@ export default function Admin() {
   const [statsError, setStatsError] = useState<Record<string, boolean>>({});
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // Remember the chosen ordering across visits. The links list only renders
+  // after a client-side unlock, so the prerender never sees this value and
+  // reading localStorage in the initializer is hydration-safe.
+  const [sortBy, setSortBy] = useState<SortKey>(() => {
+    if (typeof window === "undefined") return "newest";
+    const saved = localStorage.getItem("linkSort");
+    return saved && saved in SORTS ? (saved as SortKey) : "newest";
+  });
+
+  function changeSort(key: SortKey) {
+    setSortBy(key);
+    localStorage.setItem("linkSort", key);
+  }
 
   // Only send the password header while unlocking; once a session cookie
   // exists it does the authenticating and the password is wiped from state.
@@ -257,6 +301,7 @@ export default function Admin() {
           scans: prev[data.slug]?.scans ?? 0,
           disabled: false,
           note: prev[data.slug]?.note ?? "",
+          created: prev[data.slug]?.created || Date.now(),
           aliasOf: data.aliasOf,
         },
       }));
@@ -360,7 +405,7 @@ export default function Admin() {
   }
 
   const host = shortHost();
-  const entries = Object.entries(links).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(links).sort(compareLinks(sortBy));
 
   return (
     <main style={S.page}>
@@ -530,9 +575,27 @@ export default function Admin() {
             </div>
 
             <section style={{ ...S.section, ...S.mainCol }}>
-              <h2 style={S.sectionLabel}>
-                Links{entries.length > 0 && ` · ${entries.length}`}
-              </h2>
+              <div style={S.listHeader}>
+                <h2 style={{ ...S.sectionLabel, margin: 0 }}>
+                  Links{entries.length > 0 && ` · ${entries.length}`}
+                </h2>
+                {entries.length > 1 && (
+                  <label style={S.sortLabel}>
+                    Sort
+                    <select
+                      value={sortBy}
+                      onChange={(e) => changeSort(e.target.value as SortKey)}
+                      style={S.sortSelect}
+                    >
+                      {Object.entries(SORTS).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
               {entries.length === 0 ? (
                 <p style={S.muted}>No links yet — add one above to get started.</p>
               ) : (
@@ -554,6 +617,7 @@ export default function Admin() {
                           {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
                           {u.scans > 0 &&
                             ` · ${u.scans} scan${u.scans === 1 ? "" : "s"}`}
+                          {createdLabel(u.created) && ` · ${createdLabel(u.created)}`}
                         </span>
                       </div>
                       <div style={S.dest} title={u.url}>

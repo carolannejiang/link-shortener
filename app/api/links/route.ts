@@ -7,6 +7,7 @@ import {
   SCANS_KEY,
   DISABLED_KEY,
   NOTES_KEY,
+  CREATED_KEY,
   eventsKey,
   STATS_FETCH_LIMIT,
 } from "@/lib/redis";
@@ -76,14 +77,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ slug: statsSlug, events });
   }
 
-  const [urls, aliases, clicks, scans, disabledList, notes] = await Promise.all([
-    redis.hgetall<Record<string, string>>(LINKS_KEY),
-    redis.hgetall<Record<string, string>>(ALIASES_KEY),
-    redis.hgetall<Record<string, number>>(CLICKS_KEY),
-    redis.hgetall<Record<string, number>>(SCANS_KEY),
-    redis.smembers(DISABLED_KEY),
-    redis.hgetall<Record<string, string>>(NOTES_KEY),
-  ]);
+  const [urls, aliases, clicks, scans, disabledList, notes, created] =
+    await Promise.all([
+      redis.hgetall<Record<string, string>>(LINKS_KEY),
+      redis.hgetall<Record<string, string>>(ALIASES_KEY),
+      redis.hgetall<Record<string, number>>(CLICKS_KEY),
+      redis.hgetall<Record<string, number>>(SCANS_KEY),
+      redis.smembers(DISABLED_KEY),
+      redis.hgetall<Record<string, string>>(NOTES_KEY),
+      redis.hgetall<Record<string, number>>(CREATED_KEY),
+    ]);
 
   const disabled = new Set(disabledList ?? []);
   const links: Record<string, LinkInfo> = Object.fromEntries(
@@ -95,6 +98,7 @@ export async function GET(req: NextRequest) {
         scans: Number(scans?.[slug] ?? 0),
         disabled: disabled.has(slug),
         note: notes?.[slug] ?? "",
+        created: Number(created?.[slug] ?? 0),
       },
     ]),
   );
@@ -108,6 +112,7 @@ export async function GET(req: NextRequest) {
       scans: Number(scans?.[slug] ?? 0),
       disabled: disabled.has(slug),
       note: notes?.[slug] ?? "",
+      created: Number(created?.[slug] ?? 0),
       aliasOf: target,
     };
   }
@@ -175,22 +180,26 @@ export async function POST(req: NextRequest) {
     if (slug === target) return bad("A link can't be combined with itself.");
     // Store the pointer and drop any URL the slug used to carry — converting
     // a regular link into a combined one keeps its clicks, scans, and note.
+    // HSETNX stamps the creation date only the first time the slug appears.
     await Promise.all([
       redis.hset(ALIASES_KEY, { [slug]: target }),
       redis.hdel(LINKS_KEY, slug),
       redis.srem(DISABLED_KEY, slug),
+      redis.hsetnx(CREATED_KEY, slug, Date.now()),
     ]);
     return NextResponse.json({ ok: true, slug, aliasOf: target, url: targetUrl });
   }
 
   // Saving a link (re)activates it — clear any leftover disabled flag so an
   // overwrite of a disabled slug starts working again. Dropping any alias
-  // pointer turns a combined link back into a regular one. The writes are
+  // pointer turns a combined link back into a regular one, and HSETNX stamps
+  // the creation date only the first time the slug appears. The writes are
   // independent, so issue them together (one batched round trip).
   await Promise.all([
     redis.hset(LINKS_KEY, { [slug]: parsed!.toString() }),
     redis.hdel(ALIASES_KEY, slug),
     redis.srem(DISABLED_KEY, slug),
+    redis.hsetnx(CREATED_KEY, slug, Date.now()),
   ]);
   return NextResponse.json({ ok: true, slug, url: parsed!.toString() });
 }
@@ -258,6 +267,7 @@ export async function DELETE(req: NextRequest) {
       redis.hdel(SCANS_KEY, s),
       redis.srem(DISABLED_KEY, s),
       redis.hdel(NOTES_KEY, s),
+      redis.hdel(CREATED_KEY, s),
       redis.del(eventsKey(s)),
     ]),
   );

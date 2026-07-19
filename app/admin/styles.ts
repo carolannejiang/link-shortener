@@ -150,6 +150,29 @@ export const S: Record<string, CSSProperties> = {
     borderTop: "1px solid var(--border)",
     fontSize: ".85rem",
   },
+  // Section label + sort dropdown share one row above the links list.
+  listHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: ".75rem",
+    margin: "0 0 .75rem",
+  },
+  sortLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: ".4rem",
+    fontSize: ".75rem",
+    color: "var(--muted)",
+  },
+  sortSelect: {
+    padding: ".2rem .4rem",
+    fontSize: ".75rem",
+    color: "var(--fg)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+  },
   list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".45rem" },
   item: {
     display: "flex",

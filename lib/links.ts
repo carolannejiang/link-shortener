@@ -46,6 +46,9 @@ export type LinkInfo = {
   scans: number;
   disabled: boolean;
   note: string;
+  // Unix ms when the slug was first created; 0 for links that predate
+  // creation-date tracking.
+  created: number;
   // Set when this slug is a combined link: it follows another slug instead of
   // carrying its own URL. `url` then holds the target's current destination
   // ("" if the target has gone missing).
