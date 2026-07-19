@@ -4,13 +4,20 @@ import { Bots } from "ua-parser-js/extensions";
 import {
   redis,
   LINKS_KEY,
+  ALIASES_KEY,
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
   eventsKey,
   EVENTS_LIMIT,
 } from "@/lib/redis";
-import { SLUG_RE, RESERVED, MAX_SLUG_LEN, type HitEvent } from "@/lib/links";
+import {
+  SLUG_RE,
+  RESERVED,
+  MAX_SLUG_LEN,
+  MAX_ALIAS_HOPS,
+  type HitEvent,
+} from "@/lib/links";
 
 // Full user-agent parse: precise browser/OS versions, device vendor + model,
 // and crawler detection (bots come back with browser.type === "crawler"). The
@@ -111,15 +118,35 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
     return NextResponse.next();
   }
 
-  // Look up the destination and the disabled flag together; auto-pipelining
-  // folds the pair into a single round trip.
-  const [url, disabled] = await Promise.all([
+  // Look up the destination, any alias pointer, and the disabled flag
+  // together; auto-pipelining folds the trio into a single round trip.
+  const [ownUrl, aliasTarget, disabled] = await Promise.all([
     redis.hget<string>(LINKS_KEY, slug),
+    redis.hget<string>(ALIASES_KEY, slug),
     redis.sismember(DISABLED_KEY, slug),
   ]);
 
-  // Unknown slug, or one that's been disabled → fall through to the 404 page.
-  if (!url || disabled) return NextResponse.next();
+  // Unknown or disabled slug → fall through to the 404 page.
+  if (disabled) return NextResponse.next();
+
+  // A combined link stores a target slug instead of a URL: follow the pointer
+  // to the target's destination. A disabled target turns off every alias
+  // pointing at it too. Creation flattens chains, so this loop almost always
+  // runs once; the hop cap keeps a hand-edited cycle from spinning.
+  let url = ownUrl;
+  let target = aliasTarget;
+  for (let hops = 0; !url && target && hops < MAX_ALIAS_HOPS; hops++) {
+    const [targetUrl, targetDisabled, nextTarget] = await Promise.all([
+      redis.hget<string>(LINKS_KEY, target),
+      redis.sismember(DISABLED_KEY, target),
+      redis.hget<string>(ALIASES_KEY, target),
+    ]);
+    if (targetDisabled) return NextResponse.next();
+    url = targetUrl;
+    target = nextTarget;
+  }
+
+  if (!url) return NextResponse.next();
 
   // Defensive: a stored URL should always parse (the API validates it), but a
   // hand-edited Redis value shouldn't take the whole route down.

@@ -30,6 +30,12 @@ export const CLICKS_KEY = "clicks";
 // code (the QR encodes the short URL with a ?src=qr marker). field = slug.
 export const SCANS_KEY = "scans";
 
+// Combined links, kept in a parallel hash: field = alias slug, value = the
+// slug it follows. An alias stores no URL of its own — the proxy resolves it
+// to the target's URL at redirect time, so repointing the target repoints
+// every alias with it. The target slug keeps working as itself.
+export const ALIASES_KEY = "aliases";
+
 // Disabled links, kept as a set of slugs. A slug in this set still exists (URL
 // and click count are preserved) but the proxy refuses to redirect it.
 export const DISABLED_KEY = "disabled";

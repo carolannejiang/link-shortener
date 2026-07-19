@@ -53,6 +53,32 @@ export const S: Record<string, CSSProperties> = {
     borderRadius: 8,
   },
   slugRow: { display: "flex", alignItems: "stretch" },
+  // Segmented switch between the form's two modes: a fresh destination URL,
+  // or combining the slug with an existing link.
+  modeRow: { display: "flex", gap: ".4rem" },
+  modeBtn: {
+    flex: 1,
+    padding: ".4rem .6rem",
+    fontSize: ".8rem",
+    fontWeight: 600,
+    color: "var(--muted)",
+    background: "transparent",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  modeBtnActive: {
+    flex: 1,
+    padding: ".4rem .6rem",
+    fontSize: ".8rem",
+    fontWeight: 600,
+    color: "var(--fg)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--fg)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
+  hint: { fontSize: ".75rem", color: "var(--muted)" },
   slugPrefix: {
     display: "flex",
     alignItems: "center",
@@ -190,6 +216,18 @@ export const S: Record<string, CSSProperties> = {
     fontSize: ".75rem",
     color: "var(--muted)",
     whiteSpace: "nowrap",
+  },
+  // Marks a combined link in the list — same shape as the disabled tag, but
+  // in the accent color since it's a state, not a problem.
+  aliasTag: {
+    fontSize: ".7rem",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: ".03em",
+    color: "var(--accent)",
+    border: "1px solid var(--accent)",
+    borderRadius: 4,
+    padding: "0 .35rem",
   },
   disabledTag: {
     fontSize: ".7rem",

@@ -46,4 +46,24 @@ export type LinkInfo = {
   scans: number;
   disabled: boolean;
   note: string;
+  // Set when this slug is a combined link: it follows another slug instead of
+  // carrying its own URL. `url` then holds the target's current destination
+  // ("" if the target has gone missing).
+  aliasOf?: string;
 };
+
+// How many alias hops the proxy and API will follow. Creation flattens
+// aliases to point at a real link, so chains barely exist in practice — the
+// cap is a backstop so a hand-edited Redis cycle can't loop forever.
+export const MAX_ALIAS_HOPS = 3;
+
+// Follow alias pointers until we land on a slug that isn't itself an alias.
+// Used by the links API to resolve a display URL for each combined link.
+export function resolveAlias(
+  aliases: Record<string, string>,
+  slug: string,
+): string {
+  let cur = slug;
+  for (let i = 0; i < MAX_ALIAS_HOPS && aliases[cur]; i++) cur = aliases[cur];
+  return cur;
+}

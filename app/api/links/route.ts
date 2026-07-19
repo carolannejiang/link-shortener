@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   redis,
   LINKS_KEY,
+  ALIASES_KEY,
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
@@ -16,6 +17,7 @@ import {
   MAX_URL_LEN,
   MAX_NOTE_LEN,
   normalizeUrl,
+  resolveAlias,
   type LinkInfo,
 } from "@/lib/links";
 import { authorized } from "@/lib/auth";
@@ -35,12 +37,17 @@ function randomSlug(len = 6): string {
   return out;
 }
 
-// Generate a slug that isn't already taken. Widens the space after a few
-// collisions purely as a safety valve — in practice the first try is free.
+// Generate a slug that isn't already taken (as a link or an alias). Widens
+// the space after a few collisions purely as a safety valve — in practice the
+// first try is free.
 async function uniqueSlug(): Promise<string> {
   for (let i = 0; i < 5; i++) {
     const candidate = randomSlug();
-    if (!(await redis.hexists(LINKS_KEY, candidate))) return candidate;
+    const [isLink, isAlias] = await Promise.all([
+      redis.hexists(LINKS_KEY, candidate),
+      redis.hexists(ALIASES_KEY, candidate),
+    ]);
+    if (!isLink && !isAlias) return candidate;
   }
   return randomSlug(10);
 }
@@ -69,8 +76,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ slug: statsSlug, events });
   }
 
-  const [urls, clicks, scans, disabledList, notes] = await Promise.all([
+  const [urls, aliases, clicks, scans, disabledList, notes] = await Promise.all([
     redis.hgetall<Record<string, string>>(LINKS_KEY),
+    redis.hgetall<Record<string, string>>(ALIASES_KEY),
     redis.hgetall<Record<string, number>>(CLICKS_KEY),
     redis.hgetall<Record<string, number>>(SCANS_KEY),
     redis.smembers(DISABLED_KEY),
@@ -91,29 +99,59 @@ export async function GET(req: NextRequest) {
     ]),
   );
 
+  // Combined links come after the real ones so their display URL can be read
+  // off the target — `aliasOf` names the slug they follow.
+  for (const [slug, target] of Object.entries(aliases ?? {})) {
+    links[slug] = {
+      url: urls?.[resolveAlias(aliases ?? {}, slug)] ?? "",
+      clicks: Number(clicks?.[slug] ?? 0),
+      scans: Number(scans?.[slug] ?? 0),
+      disabled: disabled.has(slug),
+      note: notes?.[slug] ?? "",
+      aliasOf: target,
+    };
+  }
+
   return NextResponse.json({ links });
 }
 
-// Create (or overwrite) a link.
+// Create (or overwrite) a link. With a `url` in the body this stores a normal
+// link; with an `aliasOf` slug instead, it stores a combined link that follows
+// that slug's destination (e.g. /bootcamp-eoi → wherever /bootcamp-public
+// points, while /bootcamp-public keeps working as itself).
 export async function POST(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
   const body = await readJson(req);
   const rawSlug = String(body?.slug ?? "").trim().toLowerCase();
   const rawUrl = String(body?.url ?? "").trim();
+  const rawTarget = String(body?.aliasOf ?? "").trim().toLowerCase();
 
-  // Validate the URL first (it's free), then resolve the slug.
-  if (rawUrl.length > MAX_URL_LEN) {
-    return bad(`URL is too long (${MAX_URL_LEN} characters max).`);
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(normalizeUrl(rawUrl));
-  } catch {
-    return bad("Enter a valid URL.");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return bad("URL must be an http:// or https:// address.");
+  // Validate the destination first (it's free), then resolve the slug.
+  let parsed: URL | null = null;
+  let target: string | null = null;
+  let targetUrl = "";
+  if (rawTarget) {
+    if (!SLUG_RE.test(rawTarget)) return bad("No such link to combine with.");
+    // Combining with an already-combined link flattens to its real target, so
+    // alias chains don't form through this API.
+    target = (await redis.hget<string>(ALIASES_KEY, rawTarget)) ?? rawTarget;
+    targetUrl = (await redis.hget<string>(LINKS_KEY, target)) ?? "";
+    if (!targetUrl) {
+      return bad(`"/${rawTarget}" doesn't exist yet — create it first.`);
+    }
+  } else {
+    if (rawUrl.length > MAX_URL_LEN) {
+      return bad(`URL is too long (${MAX_URL_LEN} characters max).`);
+    }
+    try {
+      parsed = new URL(normalizeUrl(rawUrl));
+    } catch {
+      return bad("Enter a valid URL.");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return bad("URL must be an http:// or https:// address.");
+    }
   }
 
   // No slug given → make one up. Otherwise validate the one we were handed.
@@ -133,14 +171,28 @@ export async function POST(req: NextRequest) {
     slug = rawSlug;
   }
 
+  if (target) {
+    if (slug === target) return bad("A link can't be combined with itself.");
+    // Store the pointer and drop any URL the slug used to carry — converting
+    // a regular link into a combined one keeps its clicks, scans, and note.
+    await Promise.all([
+      redis.hset(ALIASES_KEY, { [slug]: target }),
+      redis.hdel(LINKS_KEY, slug),
+      redis.srem(DISABLED_KEY, slug),
+    ]);
+    return NextResponse.json({ ok: true, slug, aliasOf: target, url: targetUrl });
+  }
+
   // Saving a link (re)activates it — clear any leftover disabled flag so an
-  // overwrite of a disabled slug starts working again. The two writes are
+  // overwrite of a disabled slug starts working again. Dropping any alias
+  // pointer turns a combined link back into a regular one. The writes are
   // independent, so issue them together (one batched round trip).
   await Promise.all([
-    redis.hset(LINKS_KEY, { [slug]: parsed.toString() }),
+    redis.hset(LINKS_KEY, { [slug]: parsed!.toString() }),
+    redis.hdel(ALIASES_KEY, slug),
     redis.srem(DISABLED_KEY, slug),
   ]);
-  return NextResponse.json({ ok: true, slug, url: parsed.toString() });
+  return NextResponse.json({ ok: true, slug, url: parsed!.toString() });
 }
 
 // Update an existing link in place: toggle its disabled state and/or set its
@@ -152,7 +204,11 @@ export async function PATCH(req: NextRequest) {
   const body = await readJson(req);
   const slug = String(body?.slug ?? "").trim().toLowerCase();
   if (!slug) return bad("Missing slug.");
-  if (!(await redis.hexists(LINKS_KEY, slug))) return bad("No such link.");
+  const [isLink, isAlias] = await Promise.all([
+    redis.hexists(LINKS_KEY, slug),
+    redis.hexists(ALIASES_KEY, slug),
+  ]);
+  if (!isLink && !isAlias) return bad("No such link.");
 
   const writes: Promise<unknown>[] = [];
 
@@ -179,7 +235,9 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok: true, slug, disabled, note });
 }
 
-// Delete a link by slug, along with its click count and disabled flag.
+// Delete a link by slug, along with its counters, note, and event log. Any
+// combined links that follow the deleted slug would dangle and 404, so they
+// go with it — the admin UI warns about this before asking.
 export async function DELETE(req: NextRequest) {
   if (!(await authorized(req))) return unauthorized();
 
@@ -187,13 +245,21 @@ export async function DELETE(req: NextRequest) {
   const slug = String(body?.slug ?? "").trim().toLowerCase();
   if (!slug) return bad("Missing slug.");
 
-  await Promise.all([
-    redis.hdel(LINKS_KEY, slug),
-    redis.hdel(CLICKS_KEY, slug),
-    redis.hdel(SCANS_KEY, slug),
-    redis.srem(DISABLED_KEY, slug),
-    redis.hdel(NOTES_KEY, slug),
-    redis.del(eventsKey(slug)),
-  ]);
-  return NextResponse.json({ ok: true });
+  const aliases = await redis.hgetall<Record<string, string>>(ALIASES_KEY);
+  const dependents = Object.entries(aliases ?? {})
+    .filter(([, target]) => target === slug)
+    .map(([alias]) => alias);
+
+  await Promise.all(
+    [slug, ...dependents].flatMap((s) => [
+      redis.hdel(LINKS_KEY, s),
+      redis.hdel(ALIASES_KEY, s),
+      redis.hdel(CLICKS_KEY, s),
+      redis.hdel(SCANS_KEY, s),
+      redis.srem(DISABLED_KEY, s),
+      redis.hdel(NOTES_KEY, s),
+      redis.del(eventsKey(s)),
+    ]),
+  );
+  return NextResponse.json({ ok: true, deleted: [slug, ...dependents] });
 }

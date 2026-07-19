@@ -56,6 +56,10 @@ export default function Admin() {
   const [links, setLinks] = useState<Links>({});
   const [slug, setSlug] = useState("");
   const [url, setUrl] = useState("");
+  // The new-link form either takes a destination URL or combines the slug
+  // with an existing link (it then follows that link's destination).
+  const [mode, setMode] = useState<"url" | "combine">("url");
+  const [combineWith, setCombineWith] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -241,7 +245,10 @@ export default function Admin() {
     setError("");
     setBusy(true);
     try {
-      const data = await api("POST", { slug, url });
+      const data = await api(
+        "POST",
+        mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url },
+      );
       setLinks((prev) => ({
         ...prev,
         [data.slug]: {
@@ -250,10 +257,12 @@ export default function Admin() {
           scans: prev[data.slug]?.scans ?? 0,
           disabled: false,
           note: prev[data.slug]?.note ?? "",
+          aliasOf: data.aliasOf,
         },
       }));
       setSlug("");
       setUrl("");
+      setCombineWith("");
       setQrFor(data.slug); // reveal the QR code for the link we just made
     } catch (err) {
       setError((err as Error).message);
@@ -324,7 +333,15 @@ export default function Admin() {
   }
 
   async function removeLink(s: string) {
-    if (!confirm(`Delete /${s}?`)) return;
+    // Combined links that follow this one are deleted with it (the server
+    // cascades), so the confirm names them up front.
+    const dependents = Object.keys(links).filter((k) => links[k].aliasOf === s);
+    const warning = dependents.length
+      ? ` The combined link${dependents.length === 1 ? "" : "s"} ${dependents
+          .map((d) => `/${d}`)
+          .join(", ")} point${dependents.length === 1 ? "s" : ""} here and will be deleted too.`
+      : "";
+    if (!confirm(`Delete /${s}?${warning}`)) return;
     setError("");
     setBusy(true);
     try {
@@ -332,6 +349,7 @@ export default function Admin() {
       setLinks((prev) => {
         const next = { ...prev };
         delete next[s];
+        for (const d of dependents) delete next[d];
         return next;
       });
     } catch (err) {
@@ -414,18 +432,61 @@ export default function Admin() {
               <section style={S.section}>
                 <h2 style={S.sectionLabel}>New link</h2>
                 <form onSubmit={addLink} style={S.form}>
-                  <label style={S.label}>
-                    Destination URL
-                    <input
-                      type="text"
-                      inputMode="url"
-                      placeholder="example.com/a/very/long/url"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      style={S.input}
-                      required
-                    />
-                  </label>
+                  <div style={S.modeRow} role="tablist" aria-label="Link type">
+                    <button
+                      type="button"
+                      onClick={() => setMode("url")}
+                      style={mode === "url" ? S.modeBtnActive : S.modeBtn}
+                      aria-pressed={mode === "url"}
+                    >
+                      New URL
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode("combine")}
+                      style={mode === "combine" ? S.modeBtnActive : S.modeBtn}
+                      aria-pressed={mode === "combine"}
+                    >
+                      Combine links
+                    </button>
+                  </div>
+                  {mode === "url" ? (
+                    <label style={S.label}>
+                      Destination URL
+                      <input
+                        type="text"
+                        inputMode="url"
+                        placeholder="example.com/a/very/long/url"
+                        value={url}
+                        onChange={(e) => setUrl(e.target.value)}
+                        style={S.input}
+                        required
+                      />
+                    </label>
+                  ) : (
+                    <label style={S.label}>
+                      Follows existing link
+                      <select
+                        value={combineWith}
+                        onChange={(e) => setCombineWith(e.target.value)}
+                        style={S.input}
+                        required
+                      >
+                        <option value="">Choose a link…</option>
+                        {entries
+                          .filter(([, u]) => !u.aliasOf)
+                          .map(([s]) => (
+                            <option key={s} value={s}>
+                              /{s}
+                            </option>
+                          ))}
+                      </select>
+                      <span style={S.hint}>
+                        The new link always redirects wherever the chosen link
+                        points — even if you change it later.
+                      </span>
+                    </label>
+                  )}
                   <label style={S.label}>
                     Short name (optional)
                     <div style={S.slugRow}>
@@ -441,7 +502,11 @@ export default function Admin() {
                       />
                     </div>
                   </label>
-                  <button type="submit" disabled={busy || !url} style={S.primary}>
+                  <button
+                    type="submit"
+                    disabled={busy || (mode === "combine" ? !combineWith : !url)}
+                    style={S.primary}
+                  >
                     {busy ? "Saving…" : "Save link"}
                   </button>
                 </form>
@@ -483,6 +548,7 @@ export default function Admin() {
                         >
                           {host}/{s}
                         </a>
+                        {u.aliasOf && <span style={S.aliasTag}>combined</span>}
                         {u.disabled && <span style={S.disabledTag}>disabled</span>}
                         <span style={S.clicks}>
                           {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
@@ -491,7 +557,9 @@ export default function Admin() {
                         </span>
                       </div>
                       <div style={S.dest} title={u.url}>
-                        → {compactUrl(u.url)}
+                        {u.aliasOf
+                          ? `↳ follows /${u.aliasOf} → ${u.url ? compactUrl(u.url) : "(missing)"}`
+                          : `→ ${compactUrl(u.url)}`}
                       </div>
                       {u.note && <div style={S.note}>📝 {u.note}</div>}
                       <div style={S.toolbar}>

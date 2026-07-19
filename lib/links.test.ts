@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeUrl, SLUG_RE, RESERVED } from "./links";
+import { normalizeUrl, resolveAlias, SLUG_RE, RESERVED } from "./links";
 
 describe("normalizeUrl", () => {
   it("leaves http and https URLs untouched", () => {
@@ -37,6 +37,30 @@ describe("SLUG_RE", () => {
     for (const bad of ["", "Career", "a b", "a/b", "a.b", "café", "a_b", "%61"]) {
       expect(SLUG_RE.test(bad)).toBe(false);
     }
+  });
+});
+
+describe("resolveAlias", () => {
+  it("returns the slug itself when it isn't an alias", () => {
+    expect(resolveAlias({}, "career")).toBe("career");
+  });
+
+  it("follows a single alias hop", () => {
+    expect(resolveAlias({ "bootcamp-eoi": "bootcamp-public" }, "bootcamp-eoi")).toBe(
+      "bootcamp-public",
+    );
+  });
+
+  it("follows a short chain to the real link", () => {
+    const aliases = { a: "b", b: "c" };
+    expect(resolveAlias(aliases, "a")).toBe("c");
+  });
+
+  it("bails out of a hand-edited cycle instead of looping forever", () => {
+    const aliases = { a: "b", b: "a" };
+    // Which slug it lands on doesn't matter — only that it terminates and
+    // returns something from the cycle.
+    expect(["a", "b"]).toContain(resolveAlias(aliases, "a"));
   });
 });
 
