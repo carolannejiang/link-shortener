@@ -6,6 +6,7 @@ import {
   startAuthentication,
 } from "@simplewebauthn/browser";
 import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
+import { isExpired } from "@/lib/links";
 import { QrBlock } from "./qr-block";
 import { StatsBlock } from "./stats-block";
 import { S } from "./styles";
@@ -41,6 +42,39 @@ function createdLabel(ms: number): string | null {
     month: "short",
     ...(sameYear ? { day: "numeric" } : { year: "numeric" }),
   });
+}
+
+// Format a unix-ms timestamp for an <input type="datetime-local">, in the
+// browser's local time. Empty string for "no expiry" (ms === 0).
+function toLocalInput(ms: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+// Read a datetime-local input value back into unix ms, or 0 when it's blank or
+// unparseable (the "never expires" case).
+function fromLocalInput(value: string): number {
+  if (!value) return 0;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// Short label for a link's expiry: "expired" once past, otherwise "expires
+// Jul 20". Returns null for links that never expire (expiresAt === 0).
+function expiryLabel(ms: number): { text: string; past: boolean } | null {
+  if (!ms) return null;
+  if (isExpired(ms, Date.now())) return { text: "expired", past: true };
+  const d = new Date(ms);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const when = d.toLocaleDateString(undefined, {
+    month: "short",
+    ...(sameYear ? { day: "numeric" } : { year: "numeric" }),
+  });
+  return { text: `expires ${when}`, past: false };
 }
 
 // The short-link domain, used only to render previews like carolanne.link/career.
@@ -87,6 +121,8 @@ export default function Admin() {
   const [links, setLinks] = useState<Links>({});
   const [slug, setSlug] = useState("");
   const [url, setUrl] = useState("");
+  // Optional comma-separated tags for the new link.
+  const [tags, setTags] = useState("");
   // The new-link form either takes a destination URL or combines the slug
   // with an existing link (it then follows that link's destination).
   const [mode, setMode] = useState<"url" | "combine">("url");
@@ -100,6 +136,17 @@ export default function Admin() {
   const [statsError, setStatsError] = useState<Record<string, boolean>>({});
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // The link whose destination/expiry editor is open, plus its draft fields.
+  const [editFor, setEditFor] = useState<string | null>(null);
+  const [editUrl, setEditUrl] = useState("");
+  const [editExpires, setEditExpires] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [editParams, setEditParams] = useState("");
+  // Slug most recently copied to the clipboard, for a transient "Copied ✓".
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
+  // Filters over the links list: a free-text query and an optional tag.
+  const [search, setSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   // Remember the chosen ordering across visits. The links list only renders
   // after a client-side unlock, so the prerender never sees this value and
   // reading localStorage in the initializer is hydration-safe.
@@ -278,6 +325,10 @@ export default function Admin() {
       setQrFor(null);
       setStatsFor(null);
       setNoteFor(null);
+      setEditFor(null);
+      setCopiedSlug(null);
+      setSearch("");
+      setTagFilter(null);
       setStatsData({});
       setStatsError({});
       setBusy(false);
@@ -289,10 +340,9 @@ export default function Admin() {
     setError("");
     setBusy(true);
     try {
-      const data = await api(
-        "POST",
-        mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url },
-      );
+      const base = mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url };
+      // Omit blank tags so overwriting an existing slug keeps its stored tags.
+      const data = await api("POST", { ...base, ...(tags.trim() ? { tags } : {}) });
       setLinks((prev) => ({
         ...prev,
         [data.slug]: {
@@ -302,11 +352,15 @@ export default function Admin() {
           disabled: false,
           note: prev[data.slug]?.note ?? "",
           created: prev[data.slug]?.created || Date.now(),
+          expiresAt: data.expiresAt ?? 0,
+          tags: data.tags ?? prev[data.slug]?.tags ?? [],
+          params: prev[data.slug]?.params ?? "",
           aliasOf: data.aliasOf,
         },
       }));
       setSlug("");
       setUrl("");
+      setTags("");
       setCombineWith("");
       setQrFor(data.slug); // reveal the QR code for the link we just made
     } catch (err) {
@@ -364,6 +418,110 @@ export default function Admin() {
     }
   }
 
+  // Open (or close) the destination/expiry editor for a link, seeding the
+  // fields with its current values.
+  function toggleEdit(s: string) {
+    if (editFor === s) {
+      setEditFor(null);
+      return;
+    }
+    setEditUrl(links[s]?.url ?? "");
+    setEditExpires(toLocalInput(links[s]?.expiresAt ?? 0));
+    setEditTags((links[s]?.tags ?? []).join(", "));
+    setEditParams(links[s]?.params ?? "");
+    setEditFor(s);
+  }
+
+  async function saveEdit(s: string) {
+    setError("");
+    setBusy(true);
+    try {
+      const expiresAt = fromLocalInput(editExpires);
+      // Combined links follow their target's URL, so only send a URL edit for
+      // regular links; expiry, tags, and params always apply.
+      const body: {
+        slug: string;
+        expiresAt: number;
+        tags: string;
+        params: string;
+        url?: string;
+      } = { slug: s, expiresAt, tags: editTags, params: editParams };
+      if (!links[s]?.aliasOf) body.url = editUrl.trim();
+      const data = await api("PATCH", body);
+      setLinks((prev) => ({
+        ...prev,
+        [s]: {
+          ...prev[s],
+          url: data.url ?? prev[s].url,
+          expiresAt,
+          tags: data.tags ?? prev[s].tags,
+          params: data.params ?? prev[s].params,
+        },
+      }));
+      setEditFor(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Copy a link's full short URL to the clipboard, with a brief confirmation.
+  async function copyShort(s: string) {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/${s}`);
+      setCopiedSlug(s);
+      setTimeout(() => setCopiedSlug((cur) => (cur === s ? null : cur)), 1500);
+    } catch {
+      setError("Couldn't copy — your browser blocked clipboard access.");
+    }
+  }
+
+  // Download the links currently shown (respecting the active filter and sort)
+  // and their counters as a CSV, straight from the loaded list — no request.
+  function exportCsv() {
+    const cell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const header = [
+      "short_url",
+      "slug",
+      "destination",
+      "clicks",
+      "scans",
+      "disabled",
+      "expires_at",
+      "tags",
+      "params",
+      "combined_with",
+      "note",
+      "created",
+    ];
+    const rows = entries.map(([s, u]) =>
+      [
+        `${host}/${s}`,
+        s,
+        u.url,
+        u.clicks,
+        u.scans,
+        u.disabled ? "yes" : "no",
+        u.expiresAt ? new Date(u.expiresAt).toISOString() : "",
+        u.tags.join(" "),
+        u.params,
+        u.aliasOf ?? "",
+        u.note,
+        u.created ? new Date(u.created).toISOString() : "",
+      ]
+        .map(cell)
+        .join(","),
+    );
+    const csv = [header.map(cell).join(","), ...rows].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "links.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   async function toggleLink(s: string, disabled: boolean) {
     setError("");
     setBusy(true);
@@ -405,7 +563,23 @@ export default function Admin() {
   }
 
   const host = shortHost();
-  const entries = Object.entries(links).sort(compareLinks(sortBy));
+  const hasLinks = Object.keys(links).length > 0;
+  // Every tag in use, for the filter row.
+  const allTags = [...new Set(Object.values(links).flatMap((l) => l.tags))].sort();
+  // Apply the tag filter and free-text search, then the chosen ordering.
+  const query = search.trim().toLowerCase();
+  const entries = Object.entries(links)
+    .filter(([s, u]) => {
+      if (tagFilter && !u.tags.includes(tagFilter)) return false;
+      if (query) {
+        const haystack = `${s} ${u.url} ${u.note} ${u.tags.join(" ")} ${
+          u.aliasOf ?? ""
+        }`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+      return true;
+    })
+    .sort(compareLinks(sortBy));
 
   return (
     <main style={S.page}>
@@ -518,8 +692,9 @@ export default function Admin() {
                         required
                       >
                         <option value="">Choose a link…</option>
-                        {entries
+                        {Object.entries(links)
                           .filter(([, u]) => !u.aliasOf)
+                          .sort(([a], [b]) => a.localeCompare(b))
                           .map(([s]) => (
                             <option key={s} value={s}>
                               /{s}
@@ -546,6 +721,16 @@ export default function Admin() {
                         style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
                       />
                     </div>
+                  </label>
+                  <label style={S.label}>
+                    Tags (optional)
+                    <input
+                      type="text"
+                      placeholder="comma-separated, e.g. job-search, social"
+                      value={tags}
+                      onChange={(e) => setTags(e.target.value)}
+                      style={S.input}
+                    />
                   </label>
                   <button
                     type="submit"
@@ -579,25 +764,73 @@ export default function Admin() {
                 <h2 style={{ ...S.sectionLabel, margin: 0 }}>
                   Links{entries.length > 0 && ` · ${entries.length}`}
                 </h2>
-                {entries.length > 1 && (
-                  <label style={S.sortLabel}>
-                    Sort
-                    <select
-                      value={sortBy}
-                      onChange={(e) => changeSort(e.target.value as SortKey)}
-                      style={S.sortSelect}
+                <div style={S.listHeaderTools}>
+                  {entries.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={exportCsv}
+                      style={S.secondaryBtn}
                     >
-                      {Object.entries(SORTS).map(([key, label]) => (
-                        <option key={key} value={key}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                      Export CSV
+                    </button>
+                  )}
+                  {entries.length > 1 && (
+                    <label style={S.sortLabel}>
+                      Sort
+                      <select
+                        value={sortBy}
+                        onChange={(e) => changeSort(e.target.value as SortKey)}
+                        style={S.sortSelect}
+                      >
+                        {Object.entries(SORTS).map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
               </div>
-              {entries.length === 0 ? (
+              {hasLinks && (
+                <div style={S.filterBar}>
+                  <input
+                    type="search"
+                    placeholder="Search links…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    style={S.filterInput}
+                    aria-label="Search links"
+                  />
+                  {allTags.length > 0 && (
+                    <div style={S.tagRow}>
+                      <button
+                        type="button"
+                        onClick={() => setTagFilter(null)}
+                        style={tagFilter === null ? S.tagChipActive : S.tagChip}
+                      >
+                        All
+                      </button>
+                      {allTags.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() =>
+                            setTagFilter((cur) => (cur === t ? null : t))
+                          }
+                          style={tagFilter === t ? S.tagChipActive : S.tagChip}
+                        >
+                          #{t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!hasLinks ? (
                 <p style={S.muted}>No links yet — add one above to get started.</p>
+              ) : entries.length === 0 ? (
+                <p style={S.muted}>No links match your search or tag filter.</p>
               ) : (
                 <ul style={S.list}>
                   {entries.map(([s, u]) => (
@@ -613,6 +846,14 @@ export default function Admin() {
                         </a>
                         {u.aliasOf && <span style={S.aliasTag}>combined</span>}
                         {u.disabled && <span style={S.disabledTag}>disabled</span>}
+                        {(() => {
+                          const ex = expiryLabel(u.expiresAt);
+                          return ex ? (
+                            <span style={ex.past ? S.disabledTag : S.expiryTag}>
+                              {ex.text}
+                            </span>
+                          ) : null;
+                        })()}
                         <span style={S.clicks}>
                           {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
                           {u.scans > 0 &&
@@ -626,7 +867,32 @@ export default function Admin() {
                           : `→ ${compactUrl(u.url)}`}
                       </div>
                       {u.note && <div style={S.note}>📝 {u.note}</div>}
+                      {u.tags.length > 0 && (
+                        <div style={S.tagRow}>
+                          {u.tags.map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() =>
+                                setTagFilter((cur) => (cur === t ? null : t))
+                              }
+                              style={tagFilter === t ? S.tagChipActive : S.tagChip}
+                              aria-label={`Filter by tag ${t}`}
+                            >
+                              #{t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <div style={S.toolbar}>
+                        <button
+                          onClick={() => copyShort(s)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`Copy short URL for ${s}`}
+                        >
+                          {copiedSlug === s ? "Copied ✓" : "Copy"}
+                        </button>
                         <button
                           onClick={() => toggleStats(s)}
                           disabled={busy}
@@ -634,6 +900,14 @@ export default function Admin() {
                           aria-label={`${statsFor === s ? "Hide" : "Show"} stats for ${s}`}
                         >
                           {statsFor === s ? "Hide stats" : "Stats"}
+                        </button>
+                        <button
+                          onClick={() => toggleEdit(s)}
+                          disabled={busy}
+                          style={S.secondaryBtn}
+                          aria-label={`${editFor === s ? "Close" : "Open"} editor for ${s}`}
+                        >
+                          {editFor === s ? "Close edit" : "Edit"}
                         </button>
                         <button
                           onClick={() => toggleNote(s)}
@@ -686,6 +960,80 @@ export default function Admin() {
                               style={S.secondaryBtn}
                             >
                               {busy ? "Saving…" : "Save note"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {editFor === s && (
+                        <div style={S.noteEditor}>
+                          {!u.aliasOf && (
+                            <label style={S.label}>
+                              Destination URL
+                              <input
+                                type="text"
+                                inputMode="url"
+                                value={editUrl}
+                                onChange={(e) => setEditUrl(e.target.value)}
+                                style={S.input}
+                              />
+                            </label>
+                          )}
+                          <label style={S.label}>
+                            Tags
+                            <input
+                              type="text"
+                              placeholder="comma-separated, e.g. job-search, social"
+                              value={editTags}
+                              onChange={(e) => setEditTags(e.target.value)}
+                              style={S.input}
+                            />
+                          </label>
+                          <label style={S.label}>
+                            Default query params
+                            <input
+                              type="text"
+                              inputMode="url"
+                              placeholder="utm_source=resume&utm_medium=qr"
+                              value={editParams}
+                              onChange={(e) => setEditParams(e.target.value)}
+                              style={S.input}
+                            />
+                            <span style={S.hint}>
+                              Added to the destination on every redirect. A
+                              visitor&apos;s own query params still win.
+                            </span>
+                          </label>
+                          <label style={S.label}>
+                            Expires (optional)
+                            <input
+                              type="datetime-local"
+                              value={editExpires}
+                              onChange={(e) => setEditExpires(e.target.value)}
+                              style={S.input}
+                            />
+                            <span style={S.hint}>
+                              After this time the link stops redirecting. Leave
+                              blank so it never expires.
+                            </span>
+                          </label>
+                          <div style={S.noteActions}>
+                            {editExpires && (
+                              <button
+                                type="button"
+                                onClick={() => setEditExpires("")}
+                                disabled={busy}
+                                style={{ ...S.secondaryBtn, marginRight: "auto" }}
+                              >
+                                Clear expiry
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => saveEdit(s)}
+                              disabled={busy || (!u.aliasOf && !editUrl.trim())}
+                              style={S.secondaryBtn}
+                            >
+                              {busy ? "Saving…" : "Save changes"}
                             </button>
                           </div>
                         </div>

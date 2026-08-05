@@ -158,6 +158,13 @@ export const S: Record<string, CSSProperties> = {
     gap: ".75rem",
     margin: "0 0 .75rem",
   },
+  // Export button + sort dropdown, grouped at the right of the list header.
+  listHeaderTools: {
+    display: "flex",
+    alignItems: "center",
+    gap: ".6rem",
+    flexWrap: "wrap",
+  },
   sortLabel: {
     display: "flex",
     alignItems: "center",
@@ -172,6 +179,43 @@ export const S: Record<string, CSSProperties> = {
     background: "var(--field-bg)",
     border: "1px solid var(--border)",
     borderRadius: 6,
+  },
+  // Search box + tag chips above the links list, for filtering by text or tag.
+  filterBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: ".5rem",
+    flexWrap: "wrap",
+    margin: "0 0 .75rem",
+  },
+  filterInput: {
+    flex: "1 1 180px",
+    minWidth: 0,
+    padding: ".4rem .6rem",
+    fontSize: ".85rem",
+    color: "var(--fg)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+  },
+  tagRow: { display: "flex", flexWrap: "wrap", gap: ".3rem", alignItems: "center" },
+  tagChip: {
+    padding: ".1rem .5rem",
+    fontSize: ".72rem",
+    color: "var(--muted)",
+    background: "transparent",
+    border: "1px solid var(--border)",
+    borderRadius: 999,
+    cursor: "pointer",
+  },
+  tagChipActive: {
+    padding: ".1rem .5rem",
+    fontSize: ".72rem",
+    color: "var(--accent-fg)",
+    background: "var(--accent)",
+    border: "1px solid var(--accent)",
+    borderRadius: 999,
+    cursor: "pointer",
   },
   list: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: ".45rem" },
   item: {
@@ -214,6 +258,28 @@ export const S: Record<string, CSSProperties> = {
     paddingTop: ".25rem",
     fontSize: ".8rem",
     color: "var(--muted)",
+  },
+  // Compact activity chart: a row of day-columns whose bars grow from the
+  // baseline. Fixed height so it reads at a glance inside the stats panel.
+  chart: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 2,
+    height: 52,
+  },
+  chartCol: {
+    flex: 1,
+    minWidth: 0,
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "flex-end",
+  },
+  chartBar: {
+    width: "100%",
+    background: "var(--accent)",
+    borderRadius: "2px 2px 0 0",
+    minHeight: 2,
   },
   chips: { display: "flex", flexWrap: "wrap", gap: ".35rem" },
   chip: {
@@ -261,6 +327,18 @@ export const S: Record<string, CSSProperties> = {
     border: "1px solid var(--danger)",
     borderRadius: 4,
     padding: "0 .35rem",
+  },
+  // Marks a link with a future expiry — neutral/muted, since it's an upcoming
+  // state, not a problem. An already-expired link reuses the danger tag above.
+  expiryTag: {
+    fontSize: ".7rem",
+    fontWeight: 600,
+    letterSpacing: ".03em",
+    color: "var(--muted)",
+    border: "1px solid var(--border)",
+    borderRadius: 4,
+    padding: "0 .35rem",
+    whiteSpace: "nowrap",
   },
   actions: { display: "flex", gap: ".4rem", flexShrink: 0 },
   secondaryBtn: {
