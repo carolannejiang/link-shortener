@@ -16,10 +16,10 @@ import {
 } from "./mobile-visits";
 
 // The phone-sized admin dashboard, rendered by app/admin/page.tsx on small
-// viewports. Flow, per the design: dashboard with the composer expanded →
-// tap a link for inline quick actions (Copy / Save QR / Details) → Details
-// opens a bottom sheet → "See all" opens the full visit log. All data and
-// mutations stay in page.tsx and arrive here as props.
+// viewports. Flow: dashboard with the composer expanded → tapping a link
+// opens its details bottom sheet (actions, note, stats, visits) → "See all"
+// opens the full visit log. All data and mutations stay in page.tsx and
+// arrive here as props.
 export type MobileDashboardProps = {
   host: string;
   links: Record<string, LinkInfo>;
@@ -78,7 +78,6 @@ export function MobileDashboard(props: MobileDashboardProps) {
     onLogout,
   } = props;
 
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const [visitsFor, setVisitsFor] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -93,15 +92,40 @@ export function MobileDashboard(props: MobileDashboardProps) {
     toastTimer.current = window.setTimeout(() => setToast(null), 2200);
   }
 
-  // Download the offscreen QR canvas as a PNG, confirming with a toast.
-  function saveQr(s: string) {
+  // Save the offscreen QR canvas as a PNG. A web page can't write into the
+  // photo library directly, so on phones this hands the file to the native
+  // share sheet — its "Save Image" action is the way into Photos. Browsers
+  // that can't share files (desktop, older Android) download the PNG instead;
+  // iOS also ignores programmatic downloads, which is why share comes first.
+  async function saveQr(s: string) {
     const canvas = qrRef.current?.querySelector("canvas");
     if (!canvas) return;
-    const a = document.createElement("a");
-    a.href = canvas.toDataURL("image/png");
-    a.download = `${s}-qr.png`;
-    a.click();
-    showToast("✓ QR code saved");
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    if (!blob) return;
+    const file = new File([blob], `${s}-qr.png`, { type: "image/png" });
+
+    const downloadPng = () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast("✓ QR code saved");
+    };
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        showToast("✓ QR code saved");
+      } catch (err) {
+        // Dismissing the share sheet is a cancel, not a failure.
+        if ((err as DOMException).name !== "AbortError") downloadPng();
+      }
+      return;
+    }
+    downloadPng();
   }
 
   function openSheet(s: string) {
@@ -110,8 +134,6 @@ export function MobileDashboard(props: MobileDashboardProps) {
   }
 
   const canSave = !busy && url.trim() !== "";
-  // The offscreen QR canvas serves whichever link's actions are showing.
-  const qrTarget = sheetFor ?? expanded;
 
   if (visitsFor && links[visitsFor]) {
     return (
@@ -206,12 +228,8 @@ export function MobileDashboard(props: MobileDashboardProps) {
               key={s}
               s={s}
               u={u}
-              active={expanded === s}
-              copied={props.copiedSlug === s}
-              onTap={() => setExpanded((cur) => (cur === s ? null : s))}
-              onCopy={() => onCopy(s)}
-              onSaveQr={() => saveQr(s)}
-              onDetails={() => openSheet(s)}
+              active={sheetFor === s}
+              onTap={() => openSheet(s)}
             />
           ))
         )}
@@ -245,9 +263,9 @@ export function MobileDashboard(props: MobileDashboardProps) {
         </div>
       )}
 
-      {qrTarget && (
+      {sheetFor && (
         <div ref={qrRef} style={{ position: "fixed", left: -9999, top: 0 }} aria-hidden>
-          <QRCodeCanvas value={qrValue(qrTarget)} size={512} marginSize={2} />
+          <QRCodeCanvas value={qrValue(sheetFor)} size={512} marginSize={2} />
         </div>
       )}
     </main>
@@ -255,25 +273,18 @@ export function MobileDashboard(props: MobileDashboardProps) {
 }
 
 // One list row: slug + note + destination on the left, counters on the
-// right. Tapping toggles the inline quick actions beneath it.
+// right. Tapping it opens the link's details sheet; `active` keeps the row
+// highlighted beneath the sheet.
 function LinkRow({
   s,
   u,
   active,
-  copied,
   onTap,
-  onCopy,
-  onSaveQr,
-  onDetails,
 }: {
   s: string;
   u: LinkInfo;
   active: boolean;
-  copied: boolean;
   onTap: () => void;
-  onCopy: () => void;
-  onSaveQr: () => void;
-  onDetails: () => void;
 }) {
   const expired = hasExpired(u);
   return (
@@ -281,10 +292,9 @@ function LinkRow({
       <button
         type="button"
         onClick={onTap}
-        aria-expanded={active}
+        aria-haspopup="dialog"
         style={{
           ...M.rowBtn,
-          ...(active ? M.rowBtnActive : {}),
           ...(!active && (u.disabled || expired) ? { opacity: 0.6 } : {}),
         }}
       >
@@ -312,19 +322,6 @@ function LinkRow({
           )}
         </div>
       </button>
-      {active && (
-        <div style={M.quickRow}>
-          <button type="button" onClick={onCopy} style={M.quickPrimary}>
-            {copied ? "Copied ✓" : "Copy"}
-          </button>
-          <button type="button" onClick={onSaveQr} style={M.quickBtn}>
-            Save QR
-          </button>
-          <button type="button" onClick={onDetails} style={M.quickDetails}>
-            Details ›
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -434,7 +431,7 @@ function DetailsSheet({
           </button>
           {!off && (
             <button type="button" onClick={onDownloadQr} style={M.actionBtn}>
-              Download QR
+              Save QR
             </button>
           )}
           {!u.aliasOf && (
