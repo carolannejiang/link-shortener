@@ -51,6 +51,36 @@ select {
   font: inherit;
 }
 
+/* Let text fields and selects shrink with their column instead of holding
+   their intrinsic width (which overflows the card in narrow windows). */
+input,
+select {
+  min-width: 0;
+}
+
+/* Admin layout: the new-link sidebar sits beside the links list when the
+   window is wide enough, and the two stack into one fluid column below that.
+   Lives here (not in admin/styles.ts) because inline styles can't express
+   media queries. */
+.admin-columns {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr);
+  gap: 2rem 3rem;
+  align-items: start;
+}
+
+.admin-sidebar {
+  min-width: 0;
+  display: grid;
+  gap: 1.5rem;
+}
+
+@media (max-width: 760px) {
+  .admin-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Consistent interaction feedback across every button variant, regardless of
    its base colors: dim slightly on hover, press down on click, fade when
    disabled. */

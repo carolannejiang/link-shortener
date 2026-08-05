@@ -1,8 +1,9 @@
 import type { CSSProperties } from "react";
 
 // Inline-style tokens for the admin screen, shared by the page and its
-// blocks. One object keeps related styles greppable; graduate to CSS modules
-// if this ever needs media queries or pseudo-classes beyond globals.css.
+// blocks. One object keeps related styles greppable. The two-column layout
+// (.admin-columns / .admin-sidebar) lives in globals.css because it needs a
+// media query to stack on narrow windows.
 export const S: Record<string, CSSProperties> = {
   page: {
     minHeight: "100dvh",
@@ -20,21 +21,6 @@ export const S: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     margin: "0 0 1.25rem",
   },
-  // Sidebar (new-link form + Touch ID) beside the links list on a laptop;
-  // flex-wrap stacks them back into one column on narrow screens.
-  columns: {
-    display: "flex",
-    flexWrap: "wrap",
-    alignItems: "flex-start",
-    gap: "2rem 3rem",
-  },
-  sidebar: {
-    flex: "1 1 260px",
-    minWidth: 0,
-    display: "grid",
-    gap: "1.5rem",
-  },
-  mainCol: { flex: "2 1 340px", minWidth: 0 },
   h1: { fontSize: "1.5rem", fontWeight: 600, margin: 0 },
   form: { display: "grid", gap: "1rem" },
   label: {
