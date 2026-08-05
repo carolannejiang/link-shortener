@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { normalizeUrl, resolveAlias, SLUG_RE, RESERVED } from "./links";
+import {
+  normalizeUrl,
+  resolveAlias,
+  isExpired,
+  parseTags,
+  parseParams,
+  MAX_TAGS,
+  SLUG_RE,
+  RESERVED,
+} from "./links";
 
 describe("normalizeUrl", () => {
   it("leaves http and https URLs untouched", () => {
@@ -61,6 +70,67 @@ describe("resolveAlias", () => {
     // Which slug it lands on doesn't matter — only that it terminates and
     // returns something from the cycle.
     expect(["a", "b"]).toContain(resolveAlias(aliases, "a"));
+  });
+});
+
+describe("isExpired", () => {
+  const now = 1_000_000;
+
+  it("treats 0 as never expiring", () => {
+    expect(isExpired(0, now)).toBe(false);
+  });
+
+  it("is not expired before the timestamp", () => {
+    expect(isExpired(now + 1, now)).toBe(false);
+  });
+
+  it("is expired at or after the timestamp", () => {
+    expect(isExpired(now, now)).toBe(true);
+    expect(isExpired(now - 1, now)).toBe(true);
+  });
+});
+
+describe("parseTags", () => {
+  it("splits, trims, lowercases, and cleans a comma string", () => {
+    expect(parseTags(" Job-Search , Social ")).toEqual(["job-search", "social"]);
+  });
+
+  it("accepts an array too", () => {
+    expect(parseTags(["Work", "work", "  "])).toEqual(["work"]);
+  });
+
+  it("drops disallowed characters and empties", () => {
+    expect(parseTags("a b, c/d, ,🎉")).toEqual(["ab", "cd"]);
+  });
+
+  it("dedupes and caps the count", () => {
+    const many = Array.from({ length: MAX_TAGS + 5 }, (_, i) => `t${i}`).join(",");
+    expect(parseTags(many)).toHaveLength(MAX_TAGS);
+    expect(parseTags("x,x,x")).toEqual(["x"]);
+  });
+
+  it("returns [] for empty or nullish input", () => {
+    expect(parseTags("")).toEqual([]);
+    expect(parseTags(null)).toEqual([]);
+    expect(parseTags(undefined)).toEqual([]);
+  });
+});
+
+describe("parseParams", () => {
+  it("normalizes a query string and strips a leading ?", () => {
+    expect(parseParams("?utm_source=resume&utm_medium=qr")).toBe(
+      "utm_source=resume&utm_medium=qr",
+    );
+  });
+
+  it("drops empty-named keys and blank input", () => {
+    expect(parseParams("=x&a=1")).toBe("a=1");
+    expect(parseParams("   ")).toBe("");
+    expect(parseParams(null)).toBe("");
+  });
+
+  it("url-encodes values so the result is a safe query string", () => {
+    expect(parseParams("q=a b&t=x/y")).toBe("q=a+b&t=x%2Fy");
   });
 });
 

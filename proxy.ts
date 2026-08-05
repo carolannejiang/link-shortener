@@ -8,6 +8,8 @@ import {
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
+  EXPIRES_KEY,
+  PARAMS_KEY,
   eventsKey,
   EVENTS_LIMIT,
 } from "@/lib/redis";
@@ -16,6 +18,7 @@ import {
   RESERVED,
   MAX_SLUG_LEN,
   MAX_ALIAS_HOPS,
+  isExpired,
   type HitEvent,
 } from "@/lib/links";
 
@@ -118,16 +121,23 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
     return NextResponse.next();
   }
 
-  // Look up the destination, any alias pointer, and the disabled flag
-  // together; auto-pipelining folds the trio into a single round trip.
-  const [ownUrl, aliasTarget, disabled] = await Promise.all([
-    redis.hget<string>(LINKS_KEY, slug),
-    redis.hget<string>(ALIASES_KEY, slug),
-    redis.sismember(DISABLED_KEY, slug),
-  ]);
+  const now = Date.now();
 
-  // Unknown or disabled slug → fall through to the 404 page.
+  // Look up the destination, any alias pointer, the disabled flag, the expiry
+  // timestamp, and the query-param preset together; auto-pipelining folds them
+  // into one round trip.
+  const [ownUrl, aliasTarget, disabled, expiresAt, presetParams] =
+    await Promise.all([
+      redis.hget<string>(LINKS_KEY, slug),
+      redis.hget<string>(ALIASES_KEY, slug),
+      redis.sismember(DISABLED_KEY, slug),
+      redis.hget<number>(EXPIRES_KEY, slug),
+      redis.hget<string>(PARAMS_KEY, slug),
+    ]);
+
+  // Unknown, disabled, or expired slug → fall through to the 404 page.
   if (disabled) return NextResponse.next();
+  if (isExpired(Number(expiresAt ?? 0), now)) return NextResponse.next();
 
   // A combined link stores a target slug instead of a URL: follow the pointer
   // to the target's destination. A disabled target turns off every alias
@@ -136,12 +146,16 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
   let url = ownUrl;
   let target = aliasTarget;
   for (let hops = 0; !url && target && hops < MAX_ALIAS_HOPS; hops++) {
-    const [targetUrl, targetDisabled, nextTarget] = await Promise.all([
-      redis.hget<string>(LINKS_KEY, target),
-      redis.sismember(DISABLED_KEY, target),
-      redis.hget<string>(ALIASES_KEY, target),
-    ]);
+    const [targetUrl, targetDisabled, nextTarget, targetExpires] =
+      await Promise.all([
+        redis.hget<string>(LINKS_KEY, target),
+        redis.sismember(DISABLED_KEY, target),
+        redis.hget<string>(ALIASES_KEY, target),
+        redis.hget<number>(EXPIRES_KEY, target),
+      ]);
+    // A disabled or expired target turns off every alias pointing at it too.
     if (targetDisabled) return NextResponse.next();
+    if (isExpired(Number(targetExpires ?? 0), now)) return NextResponse.next();
     url = targetUrl;
     target = nextTarget;
   }
@@ -157,9 +171,17 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
     return NextResponse.next();
   }
 
-  // Forward the visitor's query params to the destination — minus our
-  // internal ?src marker — so things like UTM tags survive the hop. Params
-  // the visitor supplies win over ones baked into the stored URL.
+  // Layer the link's own query-param preset (e.g. UTM defaults) onto the
+  // destination first, so it overrides any params baked into the stored URL.
+  if (presetParams) {
+    for (const [key, value] of new URLSearchParams(presetParams)) {
+      dest.searchParams.set(key, value);
+    }
+  }
+
+  // Then forward the visitor's query params — minus our internal ?src marker —
+  // so things like UTM tags survive the hop. A value the visitor supplies wins
+  // over both the stored URL's and the preset's.
   for (const [key, value] of req.nextUrl.searchParams) {
     if (key !== "src") dest.searchParams.set(key, value);
   }

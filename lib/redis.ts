@@ -49,6 +49,21 @@ export const CREATED_KEY = "created";
 // slug, value = free-text note. Never shown to visitors — only in the admin.
 export const NOTES_KEY = "notes";
 
+// Expiry timestamps, kept in a parallel hash: field = slug, value = unix ms.
+// A slug with no entry never expires; once its timestamp passes, the proxy
+// stops redirecting it (the link, counters, and note are all preserved).
+export const EXPIRES_KEY = "expires";
+
+// Organizational tags, kept in a parallel hash: field = slug, value = a
+// comma-separated, already-normalized tag list. Used only by the admin to
+// group and filter links — never seen by visitors.
+export const TAGS_KEY = "tags";
+
+// Default query-param presets, kept in a parallel hash: field = slug, value =
+// a canonical query string (e.g. "utm_source=resume"). The proxy layers these
+// onto the destination on redirect, beneath any params the visitor supplies.
+export const PARAMS_KEY = "params";
+
 // Per-hit event log for one slug: a capped Redis list of small JSON objects,
 // newest first, describing each click/scan (time, device, browser, geo, …).
 export const eventsKey = (slug: string) => `events:${slug}`;
