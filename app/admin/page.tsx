@@ -472,8 +472,8 @@ export default function Admin() {
             </form>
           </div>
         ) : (
-          <div style={S.columns}>
-            <div style={S.sidebar}>
+          <div className="admin-columns">
+            <div className="admin-sidebar">
               <section style={S.section}>
                 <h2 style={S.sectionLabel}>New link</h2>
                 <form onSubmit={addLink} style={S.form}>
@@ -574,7 +574,7 @@ export default function Admin() {
               </div>
             </div>
 
-            <section style={{ ...S.section, ...S.mainCol }}>
+            <section style={S.section}>
               <div style={S.listHeader}>
                 <h2 style={{ ...S.sectionLabel, margin: 0 }}>
                   Links{entries.length > 0 && ` · ${entries.length}`}
