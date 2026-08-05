@@ -13,7 +13,8 @@ function shortOrigin() {
 
 // The value a link's QR code encodes: the absolute short URL, tagged with
 // ?src=qr so the proxy can count scans separately from ordinary clicks.
-function qrValue(slug: string) {
+// Exported for the mobile dashboard's offscreen QR download.
+export function qrValue(slug: string) {
   return `${shortOrigin()}/${slug}?src=qr`;
 }
 

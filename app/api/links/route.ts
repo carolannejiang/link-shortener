@@ -6,6 +6,7 @@ import {
   CLICKS_KEY,
   SCANS_KEY,
   DISABLED_KEY,
+  DISABLED_AT_KEY,
   NOTES_KEY,
   CREATED_KEY,
   EXPIRES_KEY,
@@ -114,6 +115,7 @@ export async function GET(req: NextRequest) {
     clicks,
     scans,
     disabledList,
+    disabledAt,
     notes,
     created,
     expires,
@@ -125,6 +127,7 @@ export async function GET(req: NextRequest) {
     redis.hgetall<Record<string, number>>(CLICKS_KEY),
     redis.hgetall<Record<string, number>>(SCANS_KEY),
     redis.smembers(DISABLED_KEY),
+    redis.hgetall<Record<string, number>>(DISABLED_AT_KEY),
     redis.hgetall<Record<string, string>>(NOTES_KEY),
     redis.hgetall<Record<string, number>>(CREATED_KEY),
     redis.hgetall<Record<string, number>>(EXPIRES_KEY),
@@ -146,6 +149,7 @@ export async function GET(req: NextRequest) {
         clicks: Number(clicks?.[slug] ?? 0),
         scans: Number(scans?.[slug] ?? 0),
         disabled: disabled.has(slug),
+        disabledAt: Number(disabledAt?.[slug] ?? 0),
         note: notes?.[slug] ?? "",
         created: Number(created?.[slug] ?? 0),
         expiresAt: Number(expires?.[slug] ?? 0),
@@ -163,6 +167,7 @@ export async function GET(req: NextRequest) {
       clicks: Number(clicks?.[slug] ?? 0),
       scans: Number(scans?.[slug] ?? 0),
       disabled: disabled.has(slug),
+      disabledAt: Number(disabledAt?.[slug] ?? 0),
       note: notes?.[slug] ?? "",
       created: Number(created?.[slug] ?? 0),
       expiresAt: Number(expires?.[slug] ?? 0),
@@ -250,6 +255,7 @@ export async function POST(req: NextRequest) {
       redis.hset(ALIASES_KEY, { [slug]: target }),
       redis.hdel(LINKS_KEY, slug),
       redis.srem(DISABLED_KEY, slug),
+      redis.hdel(DISABLED_AT_KEY, slug),
       redis.hsetnx(CREATED_KEY, slug, Date.now()),
       applyExpiry(slug),
       ...(hasTags ? [applyTags(slug)] : []),
@@ -273,6 +279,7 @@ export async function POST(req: NextRequest) {
     redis.hset(LINKS_KEY, { [slug]: destUrl }),
     redis.hdel(ALIASES_KEY, slug),
     redis.srem(DISABLED_KEY, slug),
+    redis.hdel(DISABLED_AT_KEY, slug),
     redis.hsetnx(CREATED_KEY, slug, Date.now()),
     applyExpiry(slug),
     ...(hasTags ? [applyTags(slug)] : []),
@@ -355,6 +362,13 @@ export async function PATCH(req: NextRequest) {
     writes.push(
       disabled ? redis.sadd(DISABLED_KEY, slug) : redis.srem(DISABLED_KEY, slug),
     );
+    // Stamp when the link went dark (HSETNX keeps the original moment if
+    // "disable" is sent twice); turning it back on clears the stamp.
+    writes.push(
+      disabled
+        ? redis.hsetnx(DISABLED_AT_KEY, slug, Date.now())
+        : redis.hdel(DISABLED_AT_KEY, slug),
+    );
   }
 
   let note: string | undefined;
@@ -403,6 +417,7 @@ export async function DELETE(req: NextRequest) {
       redis.hdel(CLICKS_KEY, s),
       redis.hdel(SCANS_KEY, s),
       redis.srem(DISABLED_KEY, s),
+      redis.hdel(DISABLED_AT_KEY, s),
       redis.hdel(NOTES_KEY, s),
       redis.hdel(CREATED_KEY, s),
       redis.hdel(EXPIRES_KEY, s),

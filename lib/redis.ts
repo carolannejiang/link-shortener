@@ -45,6 +45,12 @@ export const DISABLED_KEY = "disabled";
 // original date. Links made before this hash existed simply have no entry.
 export const CREATED_KEY = "created";
 
+// When each disabled slug was turned off, kept in a parallel hash: field =
+// slug, value = unix ms. Written with HSETNX when a link is disabled (so
+// re-sending "disable" keeps the original moment) and deleted when it's
+// enabled again. Lets the admin date a link's "visits while off".
+export const DISABLED_AT_KEY = "disabled_at";
+
 // Private, admin-only notes about a link, kept in a parallel hash: field =
 // slug, value = free-text note. Never shown to visitors — only in the admin.
 export const NOTES_KEY = "notes";

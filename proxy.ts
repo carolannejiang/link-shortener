@@ -67,6 +67,7 @@ function geoValue(v: string | null): string | undefined {
 type HitContext = {
   t: number;
   fromQr: boolean;
+  denied: boolean;
   ua: string;
   referer: string | null;
   country: string | null;
@@ -84,12 +85,14 @@ async function recordHit(slug: string, ctx: HitContext) {
     ref: refHost(ctx.referer),
     country: geoValue(ctx.country),
     city: geoValue(ctx.city),
+    ...(ctx.denied ? { denied: true } : {}),
   };
   const pipe = redis.pipeline();
   // Link-preview crawlers (iMessage, Slack, WhatsApp, …) fetch every shared
   // link. They stay visible in the event log, but don't inflate the human
-  // click/scan counters.
-  if (parsed.device !== "bot") {
+  // click/scan counters. Denied hits (link was off) aren't clicks either —
+  // the visitor got a 404 — so they're logged without counting.
+  if (parsed.device !== "bot" && !ctx.denied) {
     pipe.hincrby(CLICKS_KEY, slug, 1);
     if (ctx.fromQr) pipe.hincrby(SCANS_KEY, slug, 1);
   }
@@ -135,9 +138,33 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
       redis.hget<string>(PARAMS_KEY, slug),
     ]);
 
-  // Unknown, disabled, or expired slug → fall through to the 404 page.
-  if (disabled) return NextResponse.next();
-  if (isExpired(Number(expiresAt ?? 0), now)) return NextResponse.next();
+  // Record the hit without making the visitor wait for it: waitUntil keeps
+  // the function alive after the response is sent, so the write still isn't
+  // dropped when the runtime freezes. A ?src=qr marker (set by the generated
+  // QR code) also bumps a separate scan counter, so scans are a tracked
+  // subset of total clicks. Hits on a link that's off (disabled or expired)
+  // are logged too, marked `denied` — the admin's "visits while off" — but
+  // never counted as clicks or scans.
+  const logHit = (denied: boolean) =>
+    event.waitUntil(
+      recordHit(slug, {
+        t: Date.now(),
+        fromQr: req.nextUrl.searchParams.get("src") === "qr",
+        denied,
+        ua: req.headers.get("user-agent") ?? "",
+        referer: req.headers.get("referer"),
+        country: req.headers.get("x-vercel-ip-country"),
+        city: req.headers.get("x-vercel-ip-city"),
+      }).catch((err) => console.error(`failed to record hit for /${slug}`, err)),
+    );
+
+  // A disabled or expired slug falls through to the 404 page. If the slug
+  // actually exists, the denied visit is still logged; unknown slugs record
+  // nothing.
+  if (disabled || isExpired(Number(expiresAt ?? 0), now)) {
+    if (ownUrl || aliasTarget) logHit(true);
+    return NextResponse.next();
+  }
 
   // A combined link stores a target slug instead of a URL: follow the pointer
   // to the target's destination. A disabled target turns off every alias
@@ -153,9 +180,12 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
         redis.hget<string>(ALIASES_KEY, target),
         redis.hget<number>(EXPIRES_KEY, target),
       ]);
-    // A disabled or expired target turns off every alias pointing at it too.
-    if (targetDisabled) return NextResponse.next();
-    if (isExpired(Number(targetExpires ?? 0), now)) return NextResponse.next();
+    // A disabled or expired target turns off every alias pointing at it too;
+    // the denied visit is logged under the alias slug the visitor used.
+    if (targetDisabled || isExpired(Number(targetExpires ?? 0), now)) {
+      logHit(true);
+      return NextResponse.next();
+    }
     url = targetUrl;
     target = nextTarget;
   }
@@ -186,21 +216,7 @@ export async function proxy(req: NextRequest, event: NextFetchEvent) {
     if (key !== "src") dest.searchParams.set(key, value);
   }
 
-  // Record the hit without making the visitor wait for it: waitUntil keeps
-  // the function alive after the redirect is sent, so the write still isn't
-  // dropped when the runtime freezes. A ?src=qr marker (set by the generated
-  // QR code) also bumps a separate scan counter, so scans are a tracked
-  // subset of total clicks.
-  event.waitUntil(
-    recordHit(slug, {
-      t: Date.now(),
-      fromQr: req.nextUrl.searchParams.get("src") === "qr",
-      ua: req.headers.get("user-agent") ?? "",
-      referer: req.headers.get("referer"),
-      country: req.headers.get("x-vercel-ip-country"),
-      city: req.headers.get("x-vercel-ip-city"),
-    }).catch((err) => console.error(`failed to record hit for /${slug}`, err)),
-  );
+  logHit(false);
 
   // 307 = temporary redirect. We deliberately avoid 301/308 (permanent),
   // because browsers cache those hard — if you ever repoint /career to a

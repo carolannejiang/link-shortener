@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   startRegistration,
   startAuthentication,
 } from "@simplewebauthn/browser";
 import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
 import { isExpired } from "@/lib/links";
+import { MobileDashboard } from "./mobile";
 import { QrBlock } from "./qr-block";
 import { StatsBlock } from "./stats-block";
 import { S } from "./styles";
@@ -77,6 +78,25 @@ function expiryLabel(ms: number): { text: string; past: boolean } | null {
   return { text: `expires ${when}`, past: false };
 }
 
+// Phone-sized viewports get the mobile dashboard (composer + tappable list +
+// details sheet) instead of the two-column desktop layout. False during
+// prerendering; the real value lands with the first client render.
+const MOBILE_QUERY = "(max-width: 640px)";
+
+function subscribeToMedia(onChange: () => void) {
+  const mq = window.matchMedia(MOBILE_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    subscribeToMedia,
+    () => window.matchMedia(MOBILE_QUERY).matches,
+    () => false,
+  );
+}
+
 // The short-link domain, used only to render previews like carolanne.link/career.
 // Falls back to the production domain during prerendering.
 function shortHost() {
@@ -114,6 +134,7 @@ function friendly(err: unknown): string {
 }
 
 export default function Admin() {
+  const isMobile = useIsMobile();
   const [booting, setBooting] = useState(true);
   const [password, setPassword] = useState("");
   const [unlocked, setUnlocked] = useState(false);
@@ -335,12 +356,12 @@ export default function Admin() {
     }
   }
 
-  async function addLink(e: React.FormEvent) {
-    e.preventDefault();
+  // Create (or overwrite) a link. The desktop form submits via addLink below;
+  // the mobile composer calls this directly with its URL + slug.
+  async function submitLink(base: { slug: string; url?: string; aliasOf?: string }) {
     setError("");
     setBusy(true);
     try {
-      const base = mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url };
       // Omit blank tags so overwriting an existing slug keeps its stored tags.
       const data = await api("POST", { ...base, ...(tags.trim() ? { tags } : {}) });
       setLinks((prev) => ({
@@ -350,6 +371,7 @@ export default function Admin() {
           clicks: prev[data.slug]?.clicks ?? 0,
           scans: prev[data.slug]?.scans ?? 0,
           disabled: false,
+          disabledAt: 0,
           note: prev[data.slug]?.note ?? "",
           created: prev[data.slug]?.created || Date.now(),
           expiresAt: data.expiresAt ?? 0,
@@ -370,14 +392,15 @@ export default function Admin() {
     }
   }
 
-  // Toggle the analytics panel for a link. Fetches fresh data on every open;
-  // any previously loaded list stays visible while the refresh is in flight.
-  async function toggleStats(s: string) {
-    if (statsFor === s) {
-      setStatsFor(null);
-      return;
-    }
-    setStatsFor(s);
+  function addLink(e: React.FormEvent) {
+    e.preventDefault();
+    submitLink(mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url });
+  }
+
+  // Fetch the recent per-hit events for one link into statsData. Used by the
+  // desktop stats panel and the mobile details sheet / visit log alike; any
+  // previously loaded list stays visible while the refresh is in flight.
+  async function loadStats(s: string) {
     setStatsError((prev) => ({ ...prev, [s]: false }));
     try {
       const res = await fetch(`/api/links?stats=${encodeURIComponent(s)}`, {
@@ -392,6 +415,16 @@ export default function Admin() {
     }
   }
 
+  // Toggle the analytics panel for a link, fetching fresh data on every open.
+  function toggleStats(s: string) {
+    if (statsFor === s) {
+      setStatsFor(null);
+      return;
+    }
+    setStatsFor(s);
+    loadStats(s);
+  }
+
   // Open (or close) the note editor for a link, seeding the textarea with its
   // current note.
   function toggleNote(s: string) {
@@ -403,16 +436,42 @@ export default function Admin() {
     setNoteFor(s);
   }
 
-  async function saveNote(s: string) {
+  // Store a link's note. Reports success so callers (the desktop editor and
+  // the mobile sheet) know whether to close their editing UI.
+  async function saveNoteFor(s: string, rawNote: string): Promise<boolean> {
     setError("");
     setBusy(true);
     try {
-      const note = noteDraft.trim();
+      const note = rawNote.trim();
       await api("PATCH", { slug: s, note });
       setLinks((prev) => ({ ...prev, [s]: { ...prev[s], note } }));
-      setNoteFor(null);
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveNote(s: string) {
+    if (await saveNoteFor(s, noteDraft)) setNoteFor(null);
+  }
+
+  // Repoint just the destination URL — the mobile sheet's "Edit destination".
+  async function saveUrlFor(s: string, rawUrl: string): Promise<boolean> {
+    setError("");
+    setBusy(true);
+    try {
+      const data = await api("PATCH", { slug: s, url: rawUrl.trim() });
+      setLinks((prev) => ({
+        ...prev,
+        [s]: { ...prev[s], url: data.url ?? prev[s].url },
+      }));
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -527,7 +586,16 @@ export default function Admin() {
     setBusy(true);
     try {
       await api("PATCH", { slug: s, disabled });
-      setLinks((prev) => ({ ...prev, [s]: { ...prev[s], disabled } }));
+      setLinks((prev) => ({
+        ...prev,
+        [s]: {
+          ...prev[s],
+          disabled,
+          // Mirror the server's stamp: set on disable (keeping an existing
+          // one), cleared on enable.
+          disabledAt: disabled ? prev[s].disabledAt || Date.now() : 0,
+        },
+      }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -535,7 +603,9 @@ export default function Admin() {
     }
   }
 
-  async function removeLink(s: string) {
+  // Delete a link (after a confirm). Reports whether it actually happened so
+  // the mobile sheet knows whether to close.
+  async function removeLink(s: string): Promise<boolean> {
     // Combined links that follow this one are deleted with it (the server
     // cascades), so the confirm names them up front.
     const dependents = Object.keys(links).filter((k) => links[k].aliasOf === s);
@@ -544,7 +614,7 @@ export default function Admin() {
           .map((d) => `/${d}`)
           .join(", ")} point${dependents.length === 1 ? "s" : ""} here and will be deleted too.`
       : "";
-    if (!confirm(`Delete /${s}?${warning}`)) return;
+    if (!confirm(`Delete /${s}?${warning}`)) return false;
     setError("");
     setBusy(true);
     try {
@@ -555,8 +625,10 @@ export default function Admin() {
         for (const d of dependents) delete next[d];
         return next;
       });
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -580,6 +652,39 @@ export default function Admin() {
       return true;
     })
     .sort(compareLinks(sortBy));
+
+  // Phones get the mobile dashboard once unlocked (the lock screen below is
+  // already a single column). It shows every link — the desktop-only search
+  // and tag filters don't apply — sorted the same way.
+  if (unlocked && isMobile) {
+    return (
+      <MobileDashboard
+        host={host}
+        links={links}
+        entries={Object.entries(links).sort(compareLinks(sortBy))}
+        url={url}
+        slug={slug}
+        onUrl={setUrl}
+        onSlug={(v) => setSlug(v.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+        sortBy={sortBy}
+        sortOptions={Object.entries(SORTS)}
+        onSort={(k) => changeSort(k as SortKey)}
+        busy={busy}
+        error={error}
+        copiedSlug={copiedSlug}
+        stats={statsData}
+        statsErrors={statsError}
+        onAdd={() => submitLink({ slug, url })}
+        onCopy={copyShort}
+        onLoadStats={loadStats}
+        onToggle={toggleLink}
+        onSaveNote={saveNoteFor}
+        onSaveUrl={saveUrlFor}
+        onDelete={removeLink}
+        onLogout={logout}
+      />
+    );
+  }
 
   return (
     <main style={S.page}>
