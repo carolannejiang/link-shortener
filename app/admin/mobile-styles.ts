@@ -283,28 +283,22 @@ export const M: Record<string, CSSProperties> = {
     border: "1px solid var(--border)",
     borderRadius: 8,
   },
-  secRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
-  secEdit: {
-    fontSize: ".75rem",
-    color: "var(--muted)",
-    padding: ".2rem .4rem",
-    background: "none",
-    border: "none",
-  },
-  noteBox: {
+  // The note is a bare always-editable box: styled like the read-only note
+  // card it replaced, auto-grown to its content (no visible resize).
+  noteArea: {
+    display: "block",
+    width: "100%",
     padding: ".6rem .7rem",
     fontSize: ".85rem",
+    fontFamily: "inherit",
+    lineHeight: 1.5,
+    color: "var(--fg)",
     background: "var(--surface)",
     border: "1px solid var(--border)",
     borderRadius: 8,
     margin: "0 0 12px",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
+    resize: "none",
+    overflow: "hidden",
   },
   // Inline editors inside the sheet (destination URL, note).
   editArea: { display: "grid", gap: 8, margin: "0 0 12px" },
@@ -317,17 +311,6 @@ export const M: Record<string, CSSProperties> = {
     background: "var(--field-bg)",
     border: "1px solid var(--border)",
     borderRadius: 8,
-  },
-  editTextarea: {
-    width: "100%",
-    padding: ".5rem .7rem",
-    fontSize: ".9rem",
-    fontFamily: "inherit",
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    resize: "vertical",
   },
   editActions: { display: "flex", gap: 8, justifyContent: "flex-end" },
   editBtn: {
