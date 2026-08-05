@@ -74,6 +74,10 @@ export type HitEvent = {
   ref?: string; // referring host, if any
   country?: string;
   city?: string;
+  // The link was off (disabled or expired) so the visitor saw a 404 instead
+  // of a redirect. Logged for the admin's "visits while off" view, but never
+  // counted as a click or scan.
+  denied?: boolean;
 };
 
 // What the links API returns for each slug (GET /api/links).
@@ -94,6 +98,9 @@ export type LinkInfo = {
   // Default query params appended to the destination on redirect (a UTM
   // preset), as a canonical query string with no leading "?"; "" when none.
   params: string;
+  // Unix ms when the link was turned off; 0 while it's on (or when it was
+  // disabled before this was tracked). Frames the "visits while off" log.
+  disabledAt: number;
   // Set when this slug is a combined link: it follows another slug instead of
   // carrying its own URL. `url` then holds the target's current destination
   // ("" if the target has gone missing).

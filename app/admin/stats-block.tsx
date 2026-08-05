@@ -116,7 +116,14 @@ export function StatsBlock({ hits, error }: { hits?: Hit[]; error?: boolean }) {
               {h.device} · {h.os} · {h.browser}
             </span>
             <span style={S.hitMeta}>
-              {[h.model, place(h), h.ref, h.src === "qr" ? "QR" : null]
+              {[
+                h.model,
+                place(h),
+                h.ref,
+                h.src === "qr" ? "QR" : null,
+                // The link was off (disabled/expired) — visitor saw a 404.
+                h.denied ? "404 — link was off" : null,
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </span>

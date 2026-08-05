@@ -9,6 +9,11 @@
   --danger: #b42318;
   --link: #2563eb;
   --field-bg: #ffffff;
+  /* Subtle raised background: tapped rows, note boxes, the sheet's ✕ chip. */
+  --surface: #fafafa;
+  /* Soft red fill + border for the destructive delete button. */
+  --danger-soft: #fef2f2;
+  --danger-soft-border: #fecaca;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,6 +27,9 @@
     --danger: #f97066;
     --link: #60a5fa;
     --field-bg: #161618;
+    --surface: #18181b;
+    --danger-soft: rgba(249, 112, 102, 0.12);
+    --danger-soft-border: rgba(249, 112, 102, 0.4);
   }
 }
 
