@@ -123,10 +123,9 @@ export const M: Record<string, CSSProperties> = {
   list: { flex: 1, borderTop: "1px solid var(--border)" },
   empty: { padding: "20px", color: "var(--muted)", margin: 0 },
   row: { borderBottom: "1px solid var(--border)" },
-  // Tapped row: accent edge + raised background, quick actions beneath.
+  // The row whose details sheet is open, highlighted beneath the scrim.
   rowActive: {
     borderBottom: "1px solid var(--border)",
-    borderLeft: "3px solid var(--accent)",
     background: "var(--surface)",
   },
   rowBtn: {
@@ -142,7 +141,6 @@ export const M: Record<string, CSSProperties> = {
     color: "inherit",
     textAlign: "left",
   },
-  rowBtnActive: { minHeight: 60, padding: "12px 20px 4px 17px" },
   rowMain: { flex: 1, minWidth: 0 },
   rowSlug: { fontWeight: 600 },
   rowNote: {
@@ -173,38 +171,6 @@ export const M: Record<string, CSSProperties> = {
     marginLeft: 6,
     verticalAlign: "middle",
   },
-  quickRow: { display: "flex", gap: 8, padding: "8px 20px 12px 17px" },
-  quickPrimary: {
-    flex: 1,
-    minHeight: 44,
-    fontSize: ".85rem",
-    fontWeight: 600,
-    color: "var(--accent-fg)",
-    background: "var(--accent)",
-    border: "none",
-    borderRadius: 999,
-  },
-  quickBtn: {
-    flex: 1,
-    minHeight: 44,
-    fontSize: ".85rem",
-    fontWeight: 600,
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 999,
-  },
-  quickDetails: {
-    flex: 1.4,
-    minHeight: 44,
-    fontSize: ".85rem",
-    fontWeight: 600,
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 999,
-  },
-
   toast: {
     position: "fixed",
     left: "50%",
