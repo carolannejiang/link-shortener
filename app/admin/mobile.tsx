@@ -58,6 +58,14 @@ function hasExpired(u: LinkInfo): boolean {
   return !u.disabled && isExpired(u.expiresAt, Date.now());
 }
 
+// Size the note box to its content, like the read-only box it replaced.
+// Doubles as a ref callback, so it also runs on mount.
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 export function MobileDashboard(props: MobileDashboardProps) {
   const {
     host,
@@ -362,7 +370,6 @@ function DetailsSheet({
 }) {
   const [editingUrl, setEditingUrl] = useState(false);
   const [urlDraft, setUrlDraft] = useState(u.url);
-  const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState(u.note);
 
   const off = u.disabled;
@@ -485,45 +492,26 @@ function DetailsSheet({
           </div>
         )}
 
-        <div style={M.secRow}>
-          <span style={M.label}>Note</span>
-          <button
-            type="button"
-            onClick={() => {
-              setNoteDraft(u.note);
-              setEditingNote((cur) => !cur);
-            }}
-            style={M.secEdit}
-          >
-            {editingNote ? "Cancel" : u.note ? "Edit" : "Add"}
-          </button>
-        </div>
-        {editingNote ? (
-          <div style={M.editArea}>
-            <textarea
-              value={noteDraft}
-              onChange={(e) => setNoteDraft(e.target.value)}
-              placeholder="Private note about this link — only you see it here."
-              rows={3}
-              maxLength={2000}
-              style={M.editTextarea}
-            />
-            <div style={M.editActions}>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={async () => {
-                  if (await onSaveNote(noteDraft.trim())) setEditingNote(false);
-                }}
-                style={M.editSave}
-              >
-                {busy ? "Saving…" : "Save note"}
-              </button>
-            </div>
-          </div>
-        ) : (
-          u.note && <div style={M.noteBox}>📝 {u.note}</div>
-        )}
+        <div style={{ ...M.label, marginBottom: 6 }}>Note</div>
+        {/* Always-editable: tap the box to write; it saves itself on blur
+            (tapping anywhere else, including closing the sheet). */}
+        <textarea
+          ref={autoGrow}
+          value={noteDraft}
+          onChange={(e) => {
+            setNoteDraft(e.target.value);
+            autoGrow(e.target);
+          }}
+          onBlur={() => {
+            const note = noteDraft.trim();
+            if (note !== u.note) onSaveNote(note);
+          }}
+          placeholder="Add a note — only you see it here."
+          rows={1}
+          maxLength={2000}
+          style={M.noteArea}
+          aria-label="Note"
+        />
 
         <div style={M.statsRow}>
           <span>
