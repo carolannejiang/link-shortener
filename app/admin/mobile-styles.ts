@@ -190,6 +190,17 @@ export const M: Record<string, CSSProperties> = {
     zIndex: 80,
   },
 
+  // Parks the print-resolution QR canvas in the DOM (so Save QR can read it)
+  // without letting its size leak into the layout — a 0×0 clip, matching the
+  // desktop. An off-screen `position: fixed` box here would instead give iOS
+  // Safari a horizontal-scroll gutter that drifts the whole page sideways.
+  qrHidden: {
+    position: "absolute",
+    width: 0,
+    height: 0,
+    overflow: "hidden",
+  },
+
   // Details bottom sheet over a dimmed dashboard.
   scrim: {
     position: "fixed",
@@ -366,6 +377,7 @@ export const M: Record<string, CSSProperties> = {
   },
   visitRowLine: { borderTop: "1px solid var(--border)" },
   visitLeft: {
+    minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",

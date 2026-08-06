@@ -299,9 +299,21 @@ export const S: Record<string, CSSProperties> = {
   // Rows are <button>s, so the inner layout lives on spans with explicit
   // display values.
   rowBody: { display: "block", flex: 1, minWidth: 0 },
-  rowTop: { display: "flex", alignItems: "baseline", gap: 8 },
-  rowSlug: { fontWeight: 600, fontSize: ".92rem" },
-  rowClicks: { fontSize: ".75rem", color: "var(--muted)" },
+  rowTop: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  rowSlug: {
+    fontWeight: 600,
+    fontSize: ".92rem",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  rowClicks: { fontSize: ".75rem", color: "var(--muted)", flexShrink: 0 },
   rowNote: {
     display: "block",
     fontSize: ".78rem",
@@ -360,6 +372,7 @@ export const S: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   detailTitleText: {
+    minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
