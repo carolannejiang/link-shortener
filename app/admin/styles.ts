@@ -492,42 +492,21 @@ export const S: Record<string, CSSProperties> = {
     color: "var(--muted)",
     marginBottom: 8,
   },
-  noteBox: {
-    padding: ".65rem .75rem",
-    fontSize: ".9rem",
-    color: "var(--fg)",
-    background: "var(--field-bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-  // With no note yet, the whole box is the click target and reads like an
-  // empty field with placeholder text.
-  noteAddBox: {
+  // The note is one clickable box — click anywhere to edit. Muted "add note"
+  // text stands in as the placeholder while it's empty.
+  noteField: {
     display: "block",
     width: "100%",
     padding: ".65rem .75rem",
     fontSize: ".9rem",
     fontFamily: "inherit",
     textAlign: "left",
-    color: "var(--muted)",
+    color: "var(--fg)",
     background: "var(--field-bg)",
     border: "1px solid var(--border)",
     borderRadius: 8,
-    cursor: "pointer",
-  },
-  noteEditBtn: {
-    marginLeft: ".5rem",
-    padding: 0,
-    fontSize: "1rem",
-    fontWeight: 600,
-    color: "var(--muted)",
-    background: "transparent",
-    border: "none",
-    textDecoration: "underline",
-    textUnderlineOffset: 2,
-    whiteSpace: "nowrap",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
     cursor: "pointer",
   },
   noteTextarea: {
