@@ -111,12 +111,18 @@ export const S: Record<string, CSSProperties> = {
     top: 0,
   },
   // Content caps at the design's proportions (1100px frame − 340px sidebar)
-  // instead of stretching across very wide windows.
+  // instead of stretching across very wide windows. A flex column pinned to
+  // the viewport height lets the Stats card grow to the bottom edge; when a
+  // short window can't fit everything, the pane scrolls on its own.
   detail: {
     flex: 1,
     minWidth: 0,
     maxWidth: 828,
     padding: "30px 34px 34px",
+    display: "flex",
+    flexDirection: "column",
+    height: "100dvh",
+    overflowY: "auto",
   },
 
   // ── Sidebar: header + create form ─────────────────────────────────────────
@@ -523,11 +529,18 @@ export const S: Record<string, CSSProperties> = {
   noteActions: { display: "flex", gap: ".4rem", marginTop: 8 },
 
   // ── Stats card (dashboard) + shared chart / visit rows ────────────────────
+  // Fills whatever height the detail pane has left, so Recent visits gets
+  // the run of the window. minHeight 0 (here and down the chain) lets the
+  // visit list — not the card — be the thing that scrolls; the fixed parts
+  // all carry flexShrink 0 floors.
   statsCard: {
     border: "1px solid var(--border)",
     borderRadius: 8,
     padding: "16px 18px 14px",
-    margin: "0 0 24px",
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
   },
   statsHeadRow: {
     display: "flex",
@@ -535,6 +548,7 @@ export const S: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: "1rem",
     marginBottom: 10,
+    flexShrink: 0,
   },
   segmented: {
     display: "flex",
@@ -562,6 +576,7 @@ export const S: Record<string, CSSProperties> = {
     marginBottom: 12,
     fontSize: ".75rem",
     color: "var(--muted)",
+    flexShrink: 0,
   },
   statStrong: { fontWeight: 600, color: "var(--fg)" },
   chart: {
@@ -569,6 +584,7 @@ export const S: Record<string, CSSProperties> = {
     alignItems: "flex-end",
     gap: 3,
     height: 80,
+    flexShrink: 0,
   },
   bar: {
     flex: 1,
@@ -583,12 +599,23 @@ export const S: Record<string, CSSProperties> = {
     marginTop: 6,
     fontSize: ".7rem",
     color: "var(--muted)",
+    flexShrink: 0,
   },
   statsMsg: { fontSize: ".8rem", color: "var(--muted)" },
   visitsSection: {
     marginTop: 16,
     paddingTop: 14,
     borderTop: "1px solid var(--border)",
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
+  // The rows take whatever height is left; beyond that they scroll in place.
+  visitsList: {
+    flex: 1,
+    minHeight: 170,
+    overflowY: "auto",
   },
   visitsHeadRow: {
     display: "flex",
@@ -596,6 +623,7 @@ export const S: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: "1rem",
     marginBottom: 6,
+    flexShrink: 0,
   },
   visitsTitle: { fontSize: ".75rem", fontWeight: 600, color: "var(--fg)" },
   visitsBreakdown: {
@@ -649,6 +677,7 @@ export const S: Record<string, CSSProperties> = {
     paddingTop: ".5rem",
     fontSize: ".75rem",
     color: "var(--muted)",
+    flexShrink: 0,
   },
   viewAllLink: { fontWeight: 600, color: "var(--fg)" },
 

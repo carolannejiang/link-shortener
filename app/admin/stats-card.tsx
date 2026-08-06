@@ -12,8 +12,6 @@ import {
 } from "./mobile-visits";
 import { S } from "./styles";
 
-// How many visits the dashboard card lists before pointing at "View all".
-const RECENT_SHOWN = 6;
 
 // Where the visit came from, as shown in the Source column: a scan of the
 // link's QR code, the referring site, or a direct open.
@@ -139,9 +137,10 @@ const RANGES = {
 type RangeKey = keyof typeof RANGES;
 
 // The detail pane's Stats card: range toggle, summary numbers, daily bars,
-// and the latest few visits with a link to the full history. `hits` is
-// undefined while loading; `error` marks a failed fetch. `clicks` is the
-// link's all-time counter, for the "N of M visits" footer.
+// and the recent visits, which fill whatever window height remains (and
+// scroll in place past that). `hits` is undefined while loading; `error`
+// marks a failed fetch. `clicks` is the link's all-time counter, for the
+// "N of M visits" footer.
 export function StatsCard({
   slug,
   clicks,
@@ -221,13 +220,14 @@ export function StatsCard({
               </span>
             </span>
           </div>
-          {hits.slice(0, RECENT_SHOWN).map((h, i) => (
-            <VisitRow key={`${h.t}-${i}`} h={h} />
-          ))}
+          <div style={S.visitsList}>
+            {hits.map((h, i) => (
+              <VisitRow key={`${h.t}-${i}`} h={h} />
+            ))}
+          </div>
           <div style={S.visitsFoot}>
             <span>
-              {Math.min(RECENT_SHOWN, hits.length)} of{" "}
-              {Math.max(clicks, hits.length)} visits
+              {hits.length} of {Math.max(clicks, hits.length)} visits
             </span>
             <Link href={`/admin/${slug}/visits`} style={S.viewAllLink}>
               View all
