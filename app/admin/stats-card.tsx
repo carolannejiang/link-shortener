@@ -49,8 +49,8 @@ export function VisitRow({ h, wide }: { h: Hit; wide?: boolean }) {
 }
 
 // Bucket hits into one count per local calendar day for the last `days` days,
-// oldest first. Days with no hits stay as zero-height bars, so quiet days
-// read as gaps instead of shrinking the chart.
+// oldest first, with the QR share broken out for the tooltip. Days with no
+// hits stay at zero, so quiet days read as gaps instead of shrinking the chart.
 function dailyBuckets(hits: Hit[], days: number) {
   const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
   const now = new Date();
@@ -58,12 +58,15 @@ function dailyBuckets(hits: Hit[], days: number) {
   const buckets = Array.from({ length: days }, (_, i) => {
     const d = new Date(start);
     d.setDate(start.getDate() - (days - 1 - i));
-    return { key: dayKey(d), label: shortDate(d.getTime()), count: 0 };
+    return { key: dayKey(d), label: shortDate(d.getTime()), count: 0, qr: 0 };
   });
   const index = new Map(buckets.map((b, i) => [b.key, i]));
   for (const h of hits) {
     const i = index.get(dayKey(new Date(h.t)));
-    if (i !== undefined) buckets[i].count++;
+    if (i !== undefined) {
+      buckets[i].count++;
+      if (h.src === "qr") buckets[i].qr++;
+    }
   }
   return buckets;
 }
@@ -86,46 +89,149 @@ export function dailyStats(hits: Hit[], days: number) {
   return { buckets, max, peak };
 }
 
-// The daily bar chart plus its start / peak / end axis, shared by the Stats
-// card and the full history page. The peak bar is the dark one.
+// The y-scale's top: `max` rounded up so both gridlines (top and midline)
+// land on whole counts.
+function niceCeil(max: number): number {
+  for (let pow = 1; ; pow *= 10) {
+    for (const s of [1, 2, 5]) {
+      if (s * pow * 2 >= max) return s * pow * 2;
+    }
+  }
+}
+
+// ~4 evenly spaced bucket indexes for the x-axis date labels, always
+// including the first and last day.
+function xTicks(n: number): number[] {
+  return [...new Set([0, 1, 2, 3].map((i) => Math.round((i * (n - 1)) / 3)))];
+}
+
+// Chart geometry, mirrored by S.chart's grid rows: the plot's total height,
+// and the headroom above the top gridline where the peak label rides.
+const PLOT_H = 96;
+const SCALE_H = PLOT_H - 18;
+
+// The daily bar chart shared by the Stats card and the full history page:
+// gridlines on a rounded scale, date ticks, the peak bar in the accent with
+// its count labeled, and a tooltip that follows the pointer (or the arrow
+// keys, once the chart is focused). Zero days draw no bar — only baseline.
 export function DailyBars({
   buckets,
   max,
   peak,
   days,
 }: ReturnType<typeof dailyStats> & { days: number }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const n = buckets.length;
+  const top = niceCeil(max);
+  const y = (v: number) => (v / top) * SCALE_H;
+  // Non-zero days always get a visible bar, even when the scale dwarfs them.
+  const barH = (c: number) => (c === 0 ? 0 : Math.max(y(c), 2));
+  const centerPct = (i: number) => ((i + 0.5) / n) * 100;
+  const clampPct = (pct: number, m: number) =>
+    Math.min(Math.max(pct, m), 100 - m);
+
   return (
-    <>
-      <div
-        style={{ ...S.chart, gap: buckets.length > 40 ? 1 : 3 }}
-        role="img"
-        aria-label={`Visits per day, last ${days} days`}
-      >
-        {buckets.map((b, i) => (
-          <div
-            key={b.key}
-            title={`${b.label}: ${b.count}`}
-            style={{
-              ...S.bar,
-              height: max ? `${Math.max((b.count / max) * 100, 3)}%` : "3%",
-              opacity: b.count ? 1 : 0.35,
-              ...(i === peak ? S.barPeak : {}),
-            }}
-          />
+    <div style={S.chart}>
+      <div style={S.chartYGutter} aria-hidden>
+        {[top, top / 2, 0].map((v) => (
+          <span key={v} style={{ ...S.chartYLabel, bottom: y(v) }}>
+            {v}
+          </span>
         ))}
       </div>
-      <div style={S.axis}>
-        <span>{buckets[0].label}</span>
-        {peak >= 0 ? (
-          <span>
-            {buckets[peak].label} · {max} {max === 1 ? "click" : "clicks"}
+      <div
+        style={S.chartPlot}
+        role="img"
+        aria-label={
+          `Visits per day, last ${days} days` +
+          (peak >= 0 ? `; peak ${max} on ${buckets[peak].label}` : "")
+        }
+        tabIndex={0}
+        onPointerLeave={() => setHover(null)}
+        onFocus={() => setHover((h) => h ?? n - 1)}
+        onBlur={() => setHover(null)}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const step = e.key === "ArrowLeft" ? -1 : 1;
+          setHover((h) => Math.min(Math.max((h ?? n - 1) + step, 0), n - 1));
+        }}
+      >
+        {[0, top / 2, top].map((v) => (
+          <div key={v} style={{ ...S.chartGridline, bottom: y(v) }} />
+        ))}
+        <div style={S.chartSlotRow}>
+          {buckets.map((b, i) => (
+            <div
+              key={b.key}
+              style={{ ...S.chartSlot, ...(i === hover ? S.chartSlotHover : {}) }}
+              onPointerEnter={() => setHover(i)}
+            >
+              {b.count > 0 && (
+                <div
+                  style={{
+                    ...S.bar,
+                    height: barH(b.count),
+                    ...(i === peak ? S.barPeak : {}),
+                  }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+        {peak >= 0 && (
+          <span
+            style={{
+              ...S.chartPeakLabel,
+              left: `${clampPct(centerPct(peak), 3)}%`,
+              bottom: barH(max) + 4,
+            }}
+          >
+            {max}
           </span>
-        ) : (
-          <span />
         )}
-        <span>{buckets[buckets.length - 1].label}</span>
+        {hover !== null && (
+          <div
+            style={{
+              ...S.chartTip,
+              left: `${clampPct(centerPct(hover), 12)}%`,
+            }}
+          >
+            <span style={S.chartTipValue}>
+              {buckets[hover].count}{" "}
+              {buckets[hover].count === 1 ? "visit" : "visits"}
+            </span>
+            <span style={S.chartTipMeta}>
+              {" · "}
+              {buckets[hover].label}
+              {hover === n - 1 && " (so far)"}
+              {buckets[hover].qr > 0 && ` · ${buckets[hover].qr} QR`}
+            </span>
+          </div>
+        )}
       </div>
-    </>
+      <span />
+      <div style={S.chartXAxis} aria-hidden>
+        {xTicks(n).map((i, k, arr) => (
+          <span
+            key={i}
+            style={{
+              ...S.chartXLabel,
+              ...(k === 0
+                ? { left: 0 }
+                : k === arr.length - 1
+                  ? { right: 0 }
+                  : {
+                      left: `${centerPct(i)}%`,
+                      transform: "translateX(-50%)",
+                    }),
+            }}
+          >
+            {buckets[i].label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
