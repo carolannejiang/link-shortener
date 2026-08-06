@@ -1071,19 +1071,25 @@ export default function Admin() {
                     </button>
                   </div>
                 </>
-              ) : (
+              ) : current.note ? (
                 <div style={S.noteBox}>
-                  {current.note || (
-                    <span style={S.noteEmpty}>No note yet.</span>
-                  )}
+                  {current.note}
                   <button
                     type="button"
                     onClick={startEditNote}
                     style={S.noteEditBtn}
                   >
-                    {current.note ? "edit" : "add"}
+                    edit
                   </button>
                 </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startEditNote}
+                  style={S.noteAddBox}
+                >
+                  add note
+                </button>
               )}
             </div>
 

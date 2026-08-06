@@ -502,7 +502,21 @@ export const S: Record<string, CSSProperties> = {
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
-  noteEmpty: { color: "var(--muted)" },
+  // With no note yet, the whole box is the click target and reads like an
+  // empty field with placeholder text.
+  noteAddBox: {
+    display: "block",
+    width: "100%",
+    padding: ".65rem .75rem",
+    fontSize: ".9rem",
+    fontFamily: "inherit",
+    textAlign: "left",
+    color: "var(--muted)",
+    background: "var(--field-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    cursor: "pointer",
+  },
   noteEditBtn: {
     marginLeft: ".5rem",
     padding: 0,
