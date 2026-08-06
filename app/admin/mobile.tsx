@@ -272,7 +272,7 @@ export function MobileDashboard(props: MobileDashboardProps) {
       )}
 
       {sheetFor && (
-        <div ref={qrRef} style={{ position: "fixed", left: -9999, top: 0 }} aria-hidden>
+        <div ref={qrRef} style={M.qrHidden} aria-hidden>
           <QRCodeCanvas value={qrValue(sheetFor)} size={512} marginSize={2} />
         </div>
       )}
