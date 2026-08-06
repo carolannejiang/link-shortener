@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   startRegistration,
   startAuthentication,
 } from "@simplewebauthn/browser";
 import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
-import { isExpired } from "@/lib/links";
+import { isExpired, RESERVED } from "@/lib/links";
 import { MobileDashboard } from "./mobile";
-import { QrBlock } from "./qr-block";
-import { StatsBlock } from "./stats-block";
+import { QrPanel } from "./qr-block";
+import { StatsCard } from "./stats-card";
 import { S } from "./styles";
 
 type Links = Record<string, LinkInfo>;
@@ -33,8 +33,8 @@ function compareLinks(sortBy: SortKey) {
   };
 }
 
-// Short created-date label for a list row, e.g. "Jul 18" or "Jul 2025" once
-// it's a year old. Links that predate date tracking have created === 0.
+// Short created-date label, e.g. "Jul 18" or "Jul 2025" once it's a year old.
+// Links that predate date tracking have created === 0.
 function createdLabel(ms: number): string | null {
   if (!ms) return null;
   const d = new Date(ms);
@@ -45,41 +45,8 @@ function createdLabel(ms: number): string | null {
   });
 }
 
-// Format a unix-ms timestamp for an <input type="datetime-local">, in the
-// browser's local time. Empty string for "no expiry" (ms === 0).
-function toLocalInput(ms: number): string {
-  if (!ms) return "";
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
-}
-
-// Read a datetime-local input value back into unix ms, or 0 when it's blank or
-// unparseable (the "never expires" case).
-function fromLocalInput(value: string): number {
-  if (!value) return 0;
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-// Short label for a link's expiry: "expired" once past, otherwise "expires
-// Jul 20". Returns null for links that never expire (expiresAt === 0).
-function expiryLabel(ms: number): { text: string; past: boolean } | null {
-  if (!ms) return null;
-  if (isExpired(ms, Date.now())) return { text: "expired", past: true };
-  const d = new Date(ms);
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  const when = d.toLocaleDateString(undefined, {
-    month: "short",
-    ...(sameYear ? { day: "numeric" } : { year: "numeric" }),
-  });
-  return { text: `expires ${when}`, past: false };
-}
-
 // Phone-sized viewports get the mobile dashboard (composer + tappable list +
-// details sheet) instead of the two-column desktop layout. False during
+// details sheet) instead of the two-pane desktop layout. False during
 // prerendering; the real value lands with the first client render.
 const MOBILE_QUERY = "(max-width: 640px)";
 
@@ -104,13 +71,37 @@ function shortHost() {
   return "carolanne.link";
 }
 
-// The destination as shown in the links list: scheme stripped and capped, so
-// a long URL doesn't dominate the row. Hovering the row (title attribute)
-// still reveals the full URL.
-function compactUrl(url: string, max = 60): string {
-  const bare = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
-  return bare.length > max ? `${bare.slice(0, max - 1)}…` : bare;
+// The destination as displayed: scheme and trailing slash stripped; the
+// nowrap/ellipsis styles do the truncating.
+function bareUrl(url: string): string {
+  return url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
 }
+
+// Keep slugs to the characters the server accepts as the user types.
+function sanitizeSlug(v: string): string {
+  return v.toLowerCase().replace(/[^a-z0-9-]/g, "");
+}
+
+// Why a slug can't be used for a new link, or null when it's free. The whole
+// links list is already loaded, so availability is a local check.
+function slugProblem(slug: string, links: Links): "taken" | "reserved" | null {
+  if (RESERVED.has(slug)) return "reserved";
+  if (links[slug]) return "taken";
+  return null;
+}
+
+// True for a link that's off — disabled, or past its expiry — which the list
+// and detail header mark with the "off" badge. (Helper so render stays pure
+// per the hooks linter.)
+function isOff(u: LinkInfo): boolean {
+  return u.disabled || isExpired(u.expiresAt, Date.now());
+}
+
+// Debounce before flagging a half-typed slug as taken, per the design.
+const SLUG_CHECK_MS = 400;
+
+// How long "✓ Copied" confirmations stay before reverting.
+const COPY_REVERT_MS = 2000;
 
 // A friendly label for the passkey we're about to create, based on the device.
 function deviceLabel() {
@@ -140,34 +131,28 @@ export default function Admin() {
   const [unlocked, setUnlocked] = useState(false);
   const [hasPasskey, setHasPasskey] = useState(false);
   const [links, setLinks] = useState<Links>({});
+  // The create form: destination, optional slug, and its inline states.
   const [slug, setSlug] = useState("");
   const [url, setUrl] = useState("");
-  // Optional comma-separated tags for the new link.
-  const [tags, setTags] = useState("");
-  // The new-link form either takes a destination URL or combines the slug
-  // with an existing link (it then follows that link's destination).
-  const [mode, setMode] = useState<"url" | "combine">("url");
-  const [combineWith, setCombineWith] = useState("");
+  const [slugTaken, setSlugTaken] = useState<"taken" | "reserved" | null>(null);
+  const [formError, setFormError] = useState("");
+  // The slug of the link just created, for the green "Saved" banner.
+  const [savedSlug, setSavedSlug] = useState<string | null>(null);
+  // The link shown in the detail pane, mirrored to ?link= in the URL.
+  const [selected, setSelected] = useState<string | null>(null);
+  const [editingDest, setEditingDest] = useState(false);
+  const [destDraft, setDestDraft] = useState("");
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const confirmRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
-  const [qrFor, setQrFor] = useState<string | null>(null);
-  const [statsFor, setStatsFor] = useState<string | null>(null);
+  // Slug most recently copied to the clipboard, for a transient "✓ Copied".
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [statsData, setStatsData] = useState<Record<string, Hit[]>>({});
   const [statsError, setStatsError] = useState<Record<string, boolean>>({});
-  const [noteFor, setNoteFor] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  // The link whose destination/expiry editor is open, plus its draft fields.
-  const [editFor, setEditFor] = useState<string | null>(null);
-  const [editUrl, setEditUrl] = useState("");
-  const [editExpires, setEditExpires] = useState("");
-  const [editTags, setEditTags] = useState("");
-  const [editParams, setEditParams] = useState("");
-  // Slug most recently copied to the clipboard, for a transient "Copied ✓".
-  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
-  // Filters over the links list: a free-text query and an optional tag.
-  const [search, setSearch] = useState("");
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
   // Remember the chosen ordering across visits. The links list only renders
   // after a client-side unlock, so the prerender never sees this value and
   // reading localStorage in the initializer is hydration-safe.
@@ -209,10 +194,54 @@ export default function Admin() {
     return data;
   }
 
+  // Fetch the recent per-hit events for one link into statsData. Used by the
+  // desktop stats card and the mobile details sheet / visit log alike; any
+  // previously loaded list stays visible while the refresh is in flight.
+  async function loadStats(s: string) {
+    setStatsError((prev) => ({ ...prev, [s]: false }));
+    try {
+      const res = await fetch(`/api/links?stats=${encodeURIComponent(s)}`, {
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error();
+      const hits: Hit[] = (data.events ?? []).filter(Boolean);
+      setStatsData((prev) => ({ ...prev, [s]: hits }));
+    } catch {
+      setStatsError((prev) => ({ ...prev, [s]: true }));
+    }
+  }
+
+  // Show a link in the detail pane, closing any inline editors, and reflect
+  // the choice in the URL so reloads and the visits page's "Back" land here.
+  function select(s: string) {
+    setSelected(s);
+    setEditingDest(false);
+    setEditingNote(false);
+    setConfirmingDelete(false);
+    loadStats(s);
+    window.history.replaceState(null, "", `/admin?link=${encodeURIComponent(s)}`);
+  }
+
+  // First selection after the links load: the ?link= slug if it exists,
+  // otherwise the top of the list. Leaves the URL untouched.
+  function initSelection(loaded: Links) {
+    const param = new URLSearchParams(window.location.search).get("link");
+    const pick =
+      param && loaded[param]
+        ? param
+        : Object.entries(loaded).sort(compareLinks(sortBy))[0]?.[0];
+    if (pick) {
+      setSelected(pick);
+      loadStats(pick);
+    }
+  }
+
   async function loadLinks() {
     const { links } = await api("GET");
     setLinks(links ?? {});
     setUnlocked(true);
+    initSelection(links ?? {});
   }
 
   // On load, ask the server whether a passkey exists and whether we're already
@@ -236,6 +265,7 @@ export default function Admin() {
           const data = await linksRes.json().catch(() => ({}));
           setLinks(data.links ?? {});
           setUnlocked(true);
+          initSelection(data.links ?? {});
         }
       } catch {
         // Ignore — the user can still unlock manually.
@@ -243,7 +273,38 @@ export default function Admin() {
         setBooting(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Availability check for the typed slug: cleared on every keystroke (in the
+  // input's onChange), re-flagged here once typing pauses.
+  useEffect(() => {
+    if (!slug) return;
+    const id = window.setTimeout(
+      () => setSlugTaken(slugProblem(slug, links)),
+      SLUG_CHECK_MS,
+    );
+    return () => window.clearTimeout(id);
+  }, [slug, links]);
+
+  // Esc or a click anywhere outside the confirm row backs out of a delete.
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConfirmingDelete(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (confirmRef.current && !confirmRef.current.contains(e.target as Node)) {
+        setConfirmingDelete(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [confirmingDelete]);
 
   async function unlockWithPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -324,7 +385,7 @@ export default function Admin() {
       }
 
       setHasPasskey(true);
-      setInfo("Touch ID is set up on this device. You can use it to unlock next time.");
+      setInfo("Touch ID is set up on this device.");
     } catch (err) {
       setError(friendly(err));
     } finally {
@@ -343,27 +404,31 @@ export default function Admin() {
       setPassword("");
       setLinks({});
       setInfo("");
-      setQrFor(null);
-      setStatsFor(null);
-      setNoteFor(null);
-      setEditFor(null);
+      setError("");
+      setFormError("");
+      setSlugTaken(null);
+      setSavedSlug(null);
+      setSelected(null);
+      setEditingDest(false);
+      setEditingNote(false);
+      setConfirmingDelete(false);
       setCopiedSlug(null);
-      setSearch("");
-      setTagFilter(null);
       setStatsData({});
       setStatsError({});
       setBusy(false);
+      window.history.replaceState(null, "", "/admin");
     }
   }
 
-  // Create (or overwrite) a link. The desktop form submits via addLink below;
-  // the mobile composer calls this directly with its URL + slug.
+  // Create a link. The desktop form submits via addLink below; the mobile
+  // composer calls this directly with its URL + slug.
   async function submitLink(base: { slug: string; url?: string; aliasOf?: string }) {
     setError("");
+    setFormError("");
+    setSavedSlug(null);
     setBusy(true);
     try {
-      // Omit blank tags so overwriting an existing slug keeps its stored tags.
-      const data = await api("POST", { ...base, ...(tags.trim() ? { tags } : {}) });
+      const data = await api("POST", base);
       setLinks((prev) => ({
         ...prev,
         [data.slug]: {
@@ -382,11 +447,11 @@ export default function Admin() {
       }));
       setSlug("");
       setUrl("");
-      setTags("");
-      setCombineWith("");
-      setQrFor(data.slug); // reveal the QR code for the link we just made
+      setSlugTaken(null);
+      setSavedSlug(data.slug);
+      if (!isMobile) select(data.slug);
     } catch (err) {
-      setError((err as Error).message);
+      setFormError((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -394,46 +459,14 @@ export default function Admin() {
 
   function addLink(e: React.FormEvent) {
     e.preventDefault();
-    submitLink(mode === "combine" ? { slug, aliasOf: combineWith } : { slug, url });
-  }
-
-  // Fetch the recent per-hit events for one link into statsData. Used by the
-  // desktop stats panel and the mobile details sheet / visit log alike; any
-  // previously loaded list stays visible while the refresh is in flight.
-  async function loadStats(s: string) {
-    setStatsError((prev) => ({ ...prev, [s]: false }));
-    try {
-      const res = await fetch(`/api/links?stats=${encodeURIComponent(s)}`, {
-        headers: authHeaders(),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error();
-      const hits: Hit[] = (data.events ?? []).filter(Boolean);
-      setStatsData((prev) => ({ ...prev, [s]: hits }));
-    } catch {
-      setStatsError((prev) => ({ ...prev, [s]: true }));
-    }
-  }
-
-  // Toggle the analytics panel for a link, fetching fresh data on every open.
-  function toggleStats(s: string) {
-    if (statsFor === s) {
-      setStatsFor(null);
+    // Re-check availability synchronously in case the debounce hadn't fired.
+    const problem = slug ? slugProblem(slug, links) : null;
+    if (problem) {
+      setSlugTaken(problem);
       return;
     }
-    setStatsFor(s);
-    loadStats(s);
-  }
-
-  // Open (or close) the note editor for a link, seeding the textarea with its
-  // current note.
-  function toggleNote(s: string) {
-    if (noteFor === s) {
-      setNoteFor(null);
-      return;
-    }
-    setNoteDraft(links[s]?.note ?? "");
-    setNoteFor(s);
+    if (busy || !url.trim()) return;
+    submitLink({ slug, url });
   }
 
   // Store a link's note. Reports success so callers (the desktop editor and
@@ -454,11 +487,7 @@ export default function Admin() {
     }
   }
 
-  async function saveNote(s: string) {
-    if (await saveNoteFor(s, noteDraft)) setNoteFor(null);
-  }
-
-  // Repoint just the destination URL — the mobile sheet's "Edit destination".
+  // Repoint just the destination URL, leaving the slug and stats untouched.
   async function saveUrlFor(s: string, rawUrl: string): Promise<boolean> {
     setError("");
     setBusy(true);
@@ -477,52 +506,26 @@ export default function Admin() {
     }
   }
 
-  // Open (or close) the destination/expiry editor for a link, seeding the
-  // fields with its current values.
-  function toggleEdit(s: string) {
-    if (editFor === s) {
-      setEditFor(null);
-      return;
-    }
-    setEditUrl(links[s]?.url ?? "");
-    setEditExpires(toLocalInput(links[s]?.expiresAt ?? 0));
-    setEditTags((links[s]?.tags ?? []).join(", "));
-    setEditParams(links[s]?.params ?? "");
-    setEditFor(s);
+  function startEditDest() {
+    if (!selected) return;
+    setDestDraft(links[selected]?.url ?? "");
+    setEditingDest(true);
   }
 
-  async function saveEdit(s: string) {
-    setError("");
-    setBusy(true);
-    try {
-      const expiresAt = fromLocalInput(editExpires);
-      // Combined links follow their target's URL, so only send a URL edit for
-      // regular links; expiry, tags, and params always apply.
-      const body: {
-        slug: string;
-        expiresAt: number;
-        tags: string;
-        params: string;
-        url?: string;
-      } = { slug: s, expiresAt, tags: editTags, params: editParams };
-      if (!links[s]?.aliasOf) body.url = editUrl.trim();
-      const data = await api("PATCH", body);
-      setLinks((prev) => ({
-        ...prev,
-        [s]: {
-          ...prev[s],
-          url: data.url ?? prev[s].url,
-          expiresAt,
-          tags: data.tags ?? prev[s].tags,
-          params: data.params ?? prev[s].params,
-        },
-      }));
-      setEditFor(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  async function saveDest() {
+    if (!selected || !destDraft.trim()) return;
+    if (await saveUrlFor(selected, destDraft)) setEditingDest(false);
+  }
+
+  function startEditNote() {
+    if (!selected) return;
+    setNoteDraft(links[selected]?.note ?? "");
+    setEditingNote(true);
+  }
+
+  async function saveNote() {
+    if (!selected) return;
+    if (await saveNoteFor(selected, noteDraft)) setEditingNote(false);
   }
 
   // Copy a link's full short URL to the clipboard, with a brief confirmation.
@@ -530,55 +533,13 @@ export default function Admin() {
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/${s}`);
       setCopiedSlug(s);
-      setTimeout(() => setCopiedSlug((cur) => (cur === s ? null : cur)), 1500);
+      setTimeout(
+        () => setCopiedSlug((cur) => (cur === s ? null : cur)),
+        COPY_REVERT_MS,
+      );
     } catch {
       setError("Couldn't copy — your browser blocked clipboard access.");
     }
-  }
-
-  // Download the links currently shown (respecting the active filter and sort)
-  // and their counters as a CSV, straight from the loaded list — no request.
-  function exportCsv() {
-    const cell = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-    const header = [
-      "short_url",
-      "slug",
-      "destination",
-      "clicks",
-      "scans",
-      "disabled",
-      "expires_at",
-      "tags",
-      "params",
-      "combined_with",
-      "note",
-      "created",
-    ];
-    const rows = entries.map(([s, u]) =>
-      [
-        `${host}/${s}`,
-        s,
-        u.url,
-        u.clicks,
-        u.scans,
-        u.disabled ? "yes" : "no",
-        u.expiresAt ? new Date(u.expiresAt).toISOString() : "",
-        u.tags.join(" "),
-        u.params,
-        u.aliasOf ?? "",
-        u.note,
-        u.created ? new Date(u.created).toISOString() : "",
-      ]
-        .map(cell)
-        .join(","),
-    );
-    const csv = [header.map(cell).join(","), ...rows].join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "links.csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
   }
 
   async function toggleLink(s: string, disabled: boolean) {
@@ -603,28 +564,37 @@ export default function Admin() {
     }
   }
 
-  // Delete a link (after a confirm). Reports whether it actually happened so
-  // the mobile sheet knows whether to close.
-  async function removeLink(s: string): Promise<boolean> {
-    // Combined links that follow this one are deleted with it (the server
-    // cascades), so the confirm names them up front.
+  // Delete a link (already confirmed). Combined links that follow it are
+  // deleted with it (the server cascades). Moves the selection to the next
+  // link in the list, or clears it when none remain.
+  async function performDelete(s: string): Promise<boolean> {
     const dependents = Object.keys(links).filter((k) => links[k].aliasOf === s);
-    const warning = dependents.length
-      ? ` The combined link${dependents.length === 1 ? "" : "s"} ${dependents
-          .map((d) => `/${d}`)
-          .join(", ")} point${dependents.length === 1 ? "s" : ""} here and will be deleted too.`
-      : "";
-    if (!confirm(`Delete /${s}?${warning}`)) return false;
     setError("");
     setBusy(true);
     try {
       await api("DELETE", { slug: s });
+      const gone = new Set([s, ...dependents]);
       setLinks((prev) => {
         const next = { ...prev };
-        delete next[s];
-        for (const d of dependents) delete next[d];
+        for (const g of gone) delete next[g];
         return next;
       });
+      setConfirmingDelete(false);
+      // A "Saved" banner pointing at a now-deleted link would offer to copy
+      // a dead URL.
+      setSavedSlug((cur) => (cur && gone.has(cur) ? null : cur));
+      if (selected && gone.has(selected)) {
+        const remaining = entries.map(([k]) => k).filter((k) => !gone.has(k));
+        const idx = entries.findIndex(([k]) => k === selected);
+        const next = remaining.length
+          ? remaining[Math.min(Math.max(idx, 0), remaining.length - 1)]
+          : null;
+        if (next) select(next);
+        else {
+          setSelected(null);
+          window.history.replaceState(null, "", "/admin");
+        }
+      }
       return true;
     } catch (err) {
       setError((err as Error).message);
@@ -634,43 +604,41 @@ export default function Admin() {
     }
   }
 
+  // The mobile sheet confirms with a native dialog; the desktop confirms
+  // inline in the action row instead.
+  async function removeLink(s: string): Promise<boolean> {
+    const dependents = Object.keys(links).filter((k) => links[k].aliasOf === s);
+    const warning = dependents.length
+      ? ` The combined link${dependents.length === 1 ? "" : "s"} ${dependents
+          .map((d) => `/${d}`)
+          .join(", ")} point${dependents.length === 1 ? "s" : ""} here and will be deleted too.`
+      : "";
+    if (!confirm(`Delete /${s}?${warning}`)) return false;
+    return performDelete(s);
+  }
+
   const host = shortHost();
-  const hasLinks = Object.keys(links).length > 0;
-  // Every tag in use, for the filter row.
-  const allTags = [...new Set(Object.values(links).flatMap((l) => l.tags))].sort();
-  // Apply the tag filter and free-text search, then the chosen ordering.
-  const query = search.trim().toLowerCase();
-  const entries = Object.entries(links)
-    .filter(([s, u]) => {
-      if (tagFilter && !u.tags.includes(tagFilter)) return false;
-      if (query) {
-        const haystack = `${s} ${u.url} ${u.note} ${u.tags.join(" ")} ${
-          u.aliasOf ?? ""
-        }`.toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    })
-    .sort(compareLinks(sortBy));
+  const entries = Object.entries(links).sort(compareLinks(sortBy));
+  const hasLinks = entries.length > 0;
+  const current = selected ? links[selected] : undefined;
 
   // Phones get the mobile dashboard once unlocked (the lock screen below is
-  // already a single column). It shows every link — the desktop-only search
-  // and tag filters don't apply — sorted the same way.
+  // already a single column).
   if (unlocked && isMobile) {
     return (
       <MobileDashboard
         host={host}
         links={links}
-        entries={Object.entries(links).sort(compareLinks(sortBy))}
+        entries={entries}
         url={url}
         slug={slug}
         onUrl={setUrl}
-        onSlug={(v) => setSlug(v.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+        onSlug={(v) => setSlug(sanitizeSlug(v))}
         sortBy={sortBy}
         sortOptions={Object.entries(SORTS)}
         onSort={(k) => changeSort(k as SortKey)}
         busy={busy}
-        error={error}
+        error={error || formError}
         copiedSlug={copiedSlug}
         stats={statsData}
         statsErrors={statsError}
@@ -686,475 +654,448 @@ export default function Admin() {
     );
   }
 
+  if (!unlocked) {
+    return (
+      <main style={S.page}>
+        <div style={S.cardNarrow}>
+          <div style={S.header}>
+            <h1 style={S.h1}>carolanne.link</h1>
+          </div>
+
+          {info && (
+            <p style={S.info} role="status">
+              {info}
+            </p>
+          )}
+          {error && (
+            <p style={S.error} role="alert">
+              {error}
+            </p>
+          )}
+
+          {booting ? (
+            <p style={S.muted}>Loading…</p>
+          ) : (
+            <div style={S.form}>
+              {hasPasskey && (
+                <>
+                  <button
+                    type="button"
+                    onClick={unlockWithTouchID}
+                    disabled={busy}
+                    style={S.primary}
+                  >
+                    {busy ? "Waiting for Touch ID…" : "🔓 Unlock with Touch ID"}
+                  </button>
+                  <div style={S.divider}>
+                    <span style={S.dividerText}>or use your password</span>
+                  </div>
+                </>
+              )}
+
+              <form onSubmit={unlockWithPassword} style={S.form}>
+                <label style={S.label}>
+                  Password
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoFocus={!hasPasskey}
+                    autoComplete="current-password"
+                    style={S.input}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={busy || !password}
+                  style={hasPasskey ? S.secondary : S.primary}
+                >
+                  {busy ? "Checking…" : "Unlock"}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
+
+  const currentOff = current && isOff(current);
+
   return (
-    <main style={S.page}>
-      <div style={unlocked ? S.card : S.cardNarrow}>
-        <div style={S.header}>
-          <h1 style={S.h1}>carolanne.link</h1>
-          {unlocked && (
+    <main style={S.shell}>
+      <aside style={S.sidebar}>
+        <div style={S.sideHead}>
+          <div style={S.sideTitleRow}>
+            <h1 style={S.sideTitle}>{host}</h1>
             <button onClick={logout} disabled={busy} style={S.textBtn}>
               Log out
             </button>
-          )}
+          </div>
+          <form onSubmit={addLink} style={S.createForm}>
+            <input
+              type="text"
+              inputMode="url"
+              className="field"
+              placeholder="Paste a destination URL"
+              value={url}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                setFormError("");
+              }}
+              readOnly={busy}
+              style={{ ...S.createInput, ...(busy ? S.inputBusy : {}) }}
+              aria-label="Destination URL"
+            />
+            <div style={S.slugRow}>
+              <span
+                style={{ ...S.slugPrefix, ...(slugTaken ? S.fieldError : {}) }}
+              >
+                {host}/
+              </span>
+              <input
+                type="text"
+                className="field"
+                placeholder="leave blank for random"
+                value={slug}
+                onChange={(e) => {
+                  setSlug(sanitizeSlug(e.target.value));
+                  setSlugTaken(null);
+                  setFormError("");
+                }}
+                onBlur={() => slug && setSlugTaken(slugProblem(slug, links))}
+                readOnly={busy}
+                style={{
+                  ...S.slugInput,
+                  ...(slugTaken ? S.fieldError : {}),
+                  ...(busy ? S.inputBusy : {}),
+                }}
+                aria-label="Short name (optional)"
+              />
+            </div>
+            {slugTaken === "taken" && (
+              <div style={S.slugErrorText} role="alert">
+                /{slug} is already in use —{" "}
+                <button
+                  type="button"
+                  onClick={() => select(slug)}
+                  style={S.inlineLinkBtn}
+                >
+                  edit that link
+                </button>{" "}
+                or pick another name.
+              </div>
+            )}
+            {slugTaken === "reserved" && (
+              <div style={S.slugErrorText} role="alert">
+                &ldquo;{slug}&rdquo; is reserved and can&apos;t be used as a
+                link name.
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={busy || !url.trim() || slugTaken !== null}
+              style={{
+                ...S.saveBtn,
+                ...(busy ? S.saveBtnBusy : {}),
+                ...(!busy && (!url.trim() || slugTaken) ? S.saveBtnDisabled : {}),
+              }}
+            >
+              {busy ? (
+                <>
+                  <span className="spinner" aria-hidden />
+                  Saving…
+                </>
+              ) : (
+                "Save link"
+              )}
+            </button>
+            {formError && (
+              <div style={S.formError} role="alert">
+                {formError}
+              </div>
+            )}
+            {savedSlug && (
+              <div style={S.banner} role="status">
+                <span style={S.bannerText}>
+                  Saved —{" "}
+                  <span style={S.bannerSlug}>
+                    {host}/{savedSlug}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copyShort(savedSlug)}
+                  style={S.bannerCopy}
+                >
+                  {copiedSlug === savedSlug ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
+            )}
+          </form>
         </div>
 
-        {info && (
-          <p style={S.info} role="status">
-            {info}
-          </p>
-        )}
+        <div style={S.listHead}>
+          <span style={S.listLabel}>
+            Links{hasLinks && ` · ${entries.length}`}
+          </span>
+          <select
+            value={sortBy}
+            onChange={(e) => changeSort(e.target.value as SortKey)}
+            style={S.sortSelect}
+            aria-label="Sort links"
+          >
+            {Object.entries(SORTS).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={S.list}>
+          {!hasLinks ? (
+            <p style={S.listEmpty}>No links yet — add one above.</p>
+          ) : (
+            entries.map(([s, u]) => {
+              const off = isOff(u);
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => select(s)}
+                  style={{
+                    ...S.row,
+                    ...(selected === s ? S.rowSelected : {}),
+                    ...(off ? { opacity: 0.6 } : {}),
+                  }}
+                  aria-current={selected === s ? "true" : undefined}
+                >
+                  <span style={S.rowBody}>
+                    <span style={S.rowTop}>
+                      <span style={S.rowSlug}>
+                        /{s}
+                        {off && (
+                          <>
+                            {" "}
+                            <span style={S.offBadge}>off</span>
+                          </>
+                        )}
+                      </span>
+                      <span style={S.rowClicks}>
+                        {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
+                      </span>
+                    </span>
+                    {u.note && <span style={S.rowNote}>{u.note}</span>}
+                    <span style={S.rowDest} title={u.url}>
+                      {u.aliasOf
+                        ? `follows /${u.aliasOf}`
+                        : bareUrl(u.url)}
+                    </span>
+                  </span>
+                  <span style={S.rowChevron} aria-hidden>
+                    ›
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <div style={S.sideFoot}>
+          <button
+            type="button"
+            onClick={setupTouchID}
+            disabled={busy}
+            style={S.textBtn}
+          >
+            {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
+          </button>
+          {info && <div style={S.sideFootNote}>{info}</div>}
+        </div>
+      </aside>
+
+      <section style={S.detail}>
         {error && (
           <p style={S.error} role="alert">
             {error}
           </p>
         )}
-
-        {booting ? (
-          <p style={S.muted}>Loading…</p>
-        ) : !unlocked ? (
-          <div style={S.form}>
-            {hasPasskey && (
-              <>
-                <button
-                  type="button"
-                  onClick={unlockWithTouchID}
-                  disabled={busy}
-                  style={S.primary}
-                >
-                  {busy ? "Waiting for Touch ID…" : "🔓 Unlock with Touch ID"}
-                </button>
-                <div style={S.divider}>
-                  <span style={S.dividerText}>or use your password</span>
-                </div>
-              </>
-            )}
-
-            <form onSubmit={unlockWithPassword} style={S.form}>
-              <label style={S.label}>
-                Password
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoFocus={!hasPasskey}
-                  autoComplete="current-password"
-                  style={S.input}
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={busy || !password}
-                style={hasPasskey ? S.secondary : S.primary}
-              >
-                {busy ? "Checking…" : "Unlock"}
-              </button>
-            </form>
-          </div>
+        {!current || !selected ? (
+          <p style={S.visMsg}>No links yet — create your first one on the left.</p>
         ) : (
-          <div style={S.columns}>
-            <div style={S.sidebar}>
-              <section style={S.section}>
-                <h2 style={S.sectionLabel}>New link</h2>
-                <form onSubmit={addLink} style={S.form}>
-                  <div style={S.modeRow} role="tablist" aria-label="Link type">
+          <>
+            <div style={S.detailHead}>
+              <div style={S.detailHeadLeft}>
+                <h2 style={S.detailTitle}>
+                  <span style={S.detailTitleText}>
+                    {host}/{selected}
+                  </span>
+                  {currentOff && <span style={S.offBadge}>off</span>}
+                </h2>
+                {editingDest ? (
+                  <input
+                    type="text"
+                    inputMode="url"
+                    className="field"
+                    autoFocus
+                    value={destDraft}
+                    onChange={(e) => setDestDraft(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        saveDest();
+                      }
+                      if (e.key === "Escape") setEditingDest(false);
+                    }}
+                    style={S.editInput}
+                    aria-label="Destination URL"
+                  />
+                ) : (
+                  <div style={S.detailSub} title={current.url}>
+                    {current.aliasOf
+                      ? `→ follows /${current.aliasOf} — ${bareUrl(current.url) || "(missing)"}`
+                      : `→ ${bareUrl(current.url)}`}
+                    {createdLabel(current.created) &&
+                      ` · created ${createdLabel(current.created)}`}
+                  </div>
+                )}
+                {editingDest ? (
+                  <div style={S.actionRow}>
                     <button
-                      type="button"
-                      onClick={() => setMode("url")}
-                      style={mode === "url" ? S.modeBtnActive : S.modeBtn}
-                      aria-pressed={mode === "url"}
+                      onClick={saveDest}
+                      disabled={busy || !destDraft.trim()}
+                      style={S.btnPrimary}
                     >
-                      New URL
+                      {busy ? "Saving…" : "Save"}
                     </button>
                     <button
-                      type="button"
-                      onClick={() => setMode("combine")}
-                      style={mode === "combine" ? S.modeBtnActive : S.modeBtn}
-                      aria-pressed={mode === "combine"}
+                      onClick={() => setEditingDest(false)}
+                      disabled={busy}
+                      style={S.btnSecondary}
                     >
-                      Combine links
+                      Cancel
                     </button>
                   </div>
-                  {mode === "url" ? (
-                    <label style={S.label}>
-                      Destination URL
-                      <input
-                        type="text"
-                        inputMode="url"
-                        placeholder="example.com/a/very/long/url"
-                        value={url}
-                        onChange={(e) => setUrl(e.target.value)}
-                        style={S.input}
-                        required
-                      />
-                    </label>
-                  ) : (
-                    <label style={S.label}>
-                      Follows existing link
-                      <select
-                        value={combineWith}
-                        onChange={(e) => setCombineWith(e.target.value)}
-                        style={S.input}
-                        required
+                ) : confirmingDelete ? (
+                  <div style={S.actionRow} ref={confirmRef}>
+                    <span style={S.confirmText}>
+                      Delete <span style={S.confirmSlug}>/{selected}</span>?
+                    </span>
+                    <button
+                      onClick={() => performDelete(selected)}
+                      disabled={busy}
+                      style={S.btnDangerSolid}
+                    >
+                      Yes, delete
+                    </button>
+                    <button
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={busy}
+                      style={S.btnSecondary}
+                    >
+                      Keep
+                    </button>
+                  </div>
+                ) : (
+                  <div style={S.actionRow}>
+                    <button
+                      onClick={() => copyShort(selected)}
+                      style={{
+                        ...S.btnPrimary,
+                        minWidth: 96,
+                        ...(copiedSlug === selected ? S.btnCopied : {}),
+                      }}
+                    >
+                      {copiedSlug === selected ? "✓ Copied" : "Copy link"}
+                    </button>
+                    {!current.aliasOf && (
+                      <button
+                        onClick={startEditDest}
+                        disabled={busy}
+                        style={S.btnSecondary}
                       >
-                        <option value="">Choose a link…</option>
-                        {Object.entries(links)
-                          .filter(([, u]) => !u.aliasOf)
-                          .sort(([a], [b]) => a.localeCompare(b))
-                          .map(([s]) => (
-                            <option key={s} value={s}>
-                              /{s}
-                            </option>
-                          ))}
-                      </select>
-                      <span style={S.hint}>
-                        The new link always redirects wherever the chosen link
-                        points — even if you change it later.
-                      </span>
-                    </label>
-                  )}
-                  <label style={S.label}>
-                    Short name (optional)
-                    <div style={S.slugRow}>
-                      <span style={S.slugPrefix}>{host}/</span>
-                      <input
-                        type="text"
-                        placeholder="leave blank for a random one"
-                        value={slug}
-                        onChange={(e) =>
-                          setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-                        }
-                        style={{ ...S.input, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
-                      />
-                    </div>
-                  </label>
-                  <label style={S.label}>
-                    Tags (optional)
-                    <input
-                      type="text"
-                      placeholder="comma-separated, e.g. job-search, social"
-                      value={tags}
-                      onChange={(e) => setTags(e.target.value)}
-                      style={S.input}
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={busy || (mode === "combine" ? !combineWith : !url)}
-                    style={S.primary}
-                  >
-                    {busy ? "Saving…" : "Save link"}
-                  </button>
-                </form>
-              </section>
-
-              <div style={S.footer}>
-                <span style={S.muted}>
-                  {hasPasskey
-                    ? "Touch ID is available on registered devices."
-                    : "Skip the password next time:"}
-                </span>
-                <button
-                  type="button"
-                  onClick={setupTouchID}
-                  disabled={busy}
-                  style={S.secondary}
-                >
-                  {hasPasskey ? "Add this device to Touch ID" : "Set up Touch ID"}
-                </button>
+                        Edit destination
+                      </button>
+                    )}
+                    <button
+                      onClick={() => toggleLink(selected, !current.disabled)}
+                      disabled={busy}
+                      style={S.btnSecondary}
+                    >
+                      {current.disabled ? "Enable" : "Disable"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmingDelete(true)}
+                      disabled={busy}
+                      style={S.btnDangerText}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </div>
+              <QrPanel key={selected} slug={selected} />
             </div>
 
-            <section style={{ ...S.section, ...S.mainCol }}>
-              <div style={S.listHeader}>
-                <h2 style={{ ...S.sectionLabel, margin: 0 }}>
-                  Links{entries.length > 0 && ` · ${entries.length}`}
-                </h2>
-                <div style={S.listHeaderTools}>
-                  {entries.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={exportCsv}
-                      style={S.secondaryBtn}
-                    >
-                      Export CSV
-                    </button>
-                  )}
-                  {entries.length > 1 && (
-                    <label style={S.sortLabel}>
-                      Sort
-                      <select
-                        value={sortBy}
-                        onChange={(e) => changeSort(e.target.value as SortKey)}
-                        style={S.sortSelect}
-                      >
-                        {Object.entries(SORTS).map(([key, label]) => (
-                          <option key={key} value={key}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
-              </div>
-              {hasLinks && (
-                <div style={S.filterBar}>
-                  <input
-                    type="search"
-                    placeholder="Search links…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    style={S.filterInput}
-                    aria-label="Search links"
+            <div style={S.section}>
+              <div style={S.sectionLabel}>Note</div>
+              {editingNote ? (
+                <>
+                  <textarea
+                    className="field"
+                    autoFocus
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setEditingNote(false);
+                    }}
+                    placeholder="Private note about this link — only you see it here."
+                    rows={3}
+                    maxLength={2000}
+                    style={S.noteTextarea}
                   />
-                  {allTags.length > 0 && (
-                    <div style={S.tagRow}>
-                      <button
-                        type="button"
-                        onClick={() => setTagFilter(null)}
-                        style={tagFilter === null ? S.tagChipActive : S.tagChip}
-                      >
-                        All
-                      </button>
-                      {allTags.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() =>
-                            setTagFilter((cur) => (cur === t ? null : t))
-                          }
-                          style={tagFilter === t ? S.tagChipActive : S.tagChip}
-                        >
-                          #{t}
-                        </button>
-                      ))}
-                    </div>
+                  <div style={S.noteActions}>
+                    <button
+                      onClick={saveNote}
+                      disabled={busy}
+                      style={S.btnPrimary}
+                    >
+                      {busy ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingNote(false)}
+                      disabled={busy}
+                      style={S.btnSecondary}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={S.noteBox}>
+                  {current.note || (
+                    <span style={S.noteEmpty}>No note yet.</span>
                   )}
+                  <button
+                    type="button"
+                    onClick={startEditNote}
+                    style={S.noteEditBtn}
+                  >
+                    {current.note ? "edit" : "add"}
+                  </button>
                 </div>
               )}
-              {!hasLinks ? (
-                <p style={S.muted}>No links yet — add one above to get started.</p>
-              ) : entries.length === 0 ? (
-                <p style={S.muted}>No links match your search or tag filter.</p>
-              ) : (
-                <ul style={S.list}>
-                  {entries.map(([s, u]) => (
-                    <li key={s} style={{ ...S.item, opacity: u.disabled ? 0.6 : 1 }}>
-                      <div style={S.itemHead}>
-                        <a
-                          href={`/${s}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={S.shortLink}
-                        >
-                          {host}/{s}
-                        </a>
-                        {u.aliasOf && <span style={S.aliasTag}>combined</span>}
-                        {u.disabled && <span style={S.disabledTag}>disabled</span>}
-                        {(() => {
-                          const ex = expiryLabel(u.expiresAt);
-                          return ex ? (
-                            <span style={ex.past ? S.disabledTag : S.expiryTag}>
-                              {ex.text}
-                            </span>
-                          ) : null;
-                        })()}
-                        <span style={S.clicks}>
-                          {u.clicks} {u.clicks === 1 ? "click" : "clicks"}
-                          {u.scans > 0 &&
-                            ` · ${u.scans} scan${u.scans === 1 ? "" : "s"}`}
-                          {createdLabel(u.created) && ` · ${createdLabel(u.created)}`}
-                        </span>
-                      </div>
-                      <div style={S.dest} title={u.url}>
-                        {u.aliasOf
-                          ? `↳ follows /${u.aliasOf} → ${u.url ? compactUrl(u.url) : "(missing)"}`
-                          : `→ ${compactUrl(u.url)}`}
-                      </div>
-                      {u.note && <div style={S.note}>📝 {u.note}</div>}
-                      {u.tags.length > 0 && (
-                        <div style={S.tagRow}>
-                          {u.tags.map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() =>
-                                setTagFilter((cur) => (cur === t ? null : t))
-                              }
-                              style={tagFilter === t ? S.tagChipActive : S.tagChip}
-                              aria-label={`Filter by tag ${t}`}
-                            >
-                              #{t}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <div style={S.toolbar}>
-                        <button
-                          onClick={() => copyShort(s)}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`Copy short URL for ${s}`}
-                        >
-                          {copiedSlug === s ? "Copied ✓" : "Copy"}
-                        </button>
-                        <button
-                          onClick={() => toggleStats(s)}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`${statsFor === s ? "Hide" : "Show"} stats for ${s}`}
-                        >
-                          {statsFor === s ? "Hide stats" : "Stats"}
-                        </button>
-                        <button
-                          onClick={() => toggleEdit(s)}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`${editFor === s ? "Close" : "Open"} editor for ${s}`}
-                        >
-                          {editFor === s ? "Close edit" : "Edit"}
-                        </button>
-                        <button
-                          onClick={() => toggleNote(s)}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`${noteFor === s ? "Close" : "Edit"} note for ${s}`}
-                        >
-                          {noteFor === s ? "Close note" : u.note ? "Edit note" : "Note"}
-                        </button>
-                        <button
-                          onClick={() => setQrFor((cur) => (cur === s ? null : s))}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`${qrFor === s ? "Hide" : "Show"} QR code for ${s}`}
-                        >
-                          {qrFor === s ? "Hide QR" : "QR"}
-                        </button>
-                        <button
-                          onClick={() => toggleLink(s, !u.disabled)}
-                          disabled={busy}
-                          style={S.secondaryBtn}
-                          aria-label={`${u.disabled ? "Enable" : "Disable"} ${s}`}
-                        >
-                          {u.disabled ? "Enable" : "Disable"}
-                        </button>
-                        <button
-                          onClick={() => removeLink(s)}
-                          disabled={busy}
-                          style={{ ...S.delete, marginLeft: "auto" }}
-                          aria-label={`Delete ${s}`}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      {noteFor === s && (
-                        <div style={S.noteEditor}>
-                          <textarea
-                            value={noteDraft}
-                            onChange={(e) => setNoteDraft(e.target.value)}
-                            placeholder="Private note about this link — only you see it here."
-                            rows={3}
-                            maxLength={2000}
-                            style={S.textarea}
-                          />
-                          <div style={S.noteActions}>
-                            <button
-                              type="button"
-                              onClick={() => saveNote(s)}
-                              disabled={busy}
-                              style={S.secondaryBtn}
-                            >
-                              {busy ? "Saving…" : "Save note"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {editFor === s && (
-                        <div style={S.noteEditor}>
-                          {!u.aliasOf && (
-                            <label style={S.label}>
-                              Destination URL
-                              <input
-                                type="text"
-                                inputMode="url"
-                                value={editUrl}
-                                onChange={(e) => setEditUrl(e.target.value)}
-                                style={S.input}
-                              />
-                            </label>
-                          )}
-                          <label style={S.label}>
-                            Tags
-                            <input
-                              type="text"
-                              placeholder="comma-separated, e.g. job-search, social"
-                              value={editTags}
-                              onChange={(e) => setEditTags(e.target.value)}
-                              style={S.input}
-                            />
-                          </label>
-                          <label style={S.label}>
-                            Default query params
-                            <input
-                              type="text"
-                              inputMode="url"
-                              placeholder="utm_source=resume&utm_medium=qr"
-                              value={editParams}
-                              onChange={(e) => setEditParams(e.target.value)}
-                              style={S.input}
-                            />
-                            <span style={S.hint}>
-                              Added to the destination on every redirect. A
-                              visitor&apos;s own query params still win.
-                            </span>
-                          </label>
-                          <label style={S.label}>
-                            Expires (optional)
-                            <input
-                              type="datetime-local"
-                              value={editExpires}
-                              onChange={(e) => setEditExpires(e.target.value)}
-                              style={S.input}
-                            />
-                            <span style={S.hint}>
-                              After this time the link stops redirecting. Leave
-                              blank so it never expires.
-                            </span>
-                          </label>
-                          <div style={S.noteActions}>
-                            {editExpires && (
-                              <button
-                                type="button"
-                                onClick={() => setEditExpires("")}
-                                disabled={busy}
-                                style={{ ...S.secondaryBtn, marginRight: "auto" }}
-                              >
-                                Clear expiry
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => saveEdit(s)}
-                              disabled={busy || (!u.aliasOf && !editUrl.trim())}
-                              style={S.secondaryBtn}
-                            >
-                              {busy ? "Saving…" : "Save changes"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {statsFor === s && (
-                        <StatsBlock hits={statsData[s]} error={statsError[s]} />
-                      )}
-                      {qrFor === s && <QrBlock slug={s} />}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          </div>
+            </div>
+
+            <StatsCard
+              slug={selected}
+              clicks={current.clicks}
+              hits={statsData[selected]}
+              error={statsError[selected]}
+            />
+          </>
         )}
-      </div>
+      </section>
     </main>
   );
 }

@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { S } from "./styles";
 
+// Pixel size of the PNG that Copy / Download produce — print resolution, per
+// the design, while the on-screen preview stays small.
+const QR_EXPORT_SIZE = 1024;
+
 // The full origin (scheme + host) used to build absolute QR-code URLs.
 // Falls back to the production domain during prerendering.
 function shortOrigin() {
@@ -18,35 +22,41 @@ export function qrValue(slug: string) {
   return `${shortOrigin()}/${slug}?src=qr`;
 }
 
-// A QR code (PNG) for one link. It's copied to the clipboard automatically when
-// it appears, with buttons to copy again or download it.
-export function QrBlock({ slug }: { slug: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState("");
+// The detail pane's QR panel: a small preview plus Copy / Download buttons
+// that both read from an offscreen print-resolution canvas. Rendered with
+// key={slug} so switching links resets any lingering "✓ Copied".
+export function QrPanel({ slug }: { slug: string }) {
+  const exportRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
 
-  function canvasPng(): Promise<Blob | null> {
-    const canvas = ref.current?.querySelector("canvas");
-    if (!canvas) return Promise.resolve(null);
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  function exportCanvas(): HTMLCanvasElement | null {
+    return exportRef.current?.querySelector("canvas") ?? null;
   }
 
   async function copy() {
     try {
-      const blob = await canvasPng();
+      const canvas = exportCanvas();
+      if (!canvas) throw new Error("no canvas");
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
       if (!blob) throw new Error("no image");
       await navigator.clipboard.write([
         new ClipboardItem({ "image/png": blob }),
       ]);
-      setStatus("Copied to clipboard ✓");
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Browsers block clipboard writes without a fresh click / when the tab
-      // isn't focused — fall back to asking the user to press the button.
-      setStatus('Press "Copy PNG" to copy');
+      // Clipboard blocked — the Download button still works.
     }
   }
 
-  async function download() {
-    const canvas = ref.current?.querySelector("canvas");
+  function download() {
+    const canvas = exportCanvas();
     if (!canvas) return;
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
@@ -54,29 +64,24 @@ export function QrBlock({ slug }: { slug: string }) {
     a.click();
   }
 
-  // Best-effort auto-copy as soon as the code renders. The status setState
-  // inside copy() only fires after the async clipboard write resolves, so the
-  // sync-setState rule's complaint is a false positive here.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    copy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
-    <div style={S.qrBlock}>
-      <div ref={ref} style={S.qrCanvas}>
-        <QRCodeCanvas value={qrValue(slug)} size={148} marginSize={2} />
+    <div style={S.qrPanel}>
+      <div style={S.qrBox}>
+        <QRCodeCanvas value={qrValue(slug)} size={112} marginSize={2} />
       </div>
-      <div style={S.actions}>
-        <button type="button" onClick={copy} style={S.secondaryBtn}>
-          Copy PNG
-        </button>
-        <button type="button" onClick={download} style={S.secondaryBtn}>
-          Download PNG
-        </button>
+      <div ref={exportRef} style={S.qrHidden} aria-hidden>
+        <QRCodeCanvas value={qrValue(slug)} size={QR_EXPORT_SIZE} marginSize={2} />
       </div>
-      {status && <span style={S.hitMeta}>{status}</span>}
+      <button
+        type="button"
+        onClick={copy}
+        style={{ ...S.qrCopyBtn, ...(copied ? S.qrCopyBtnCopied : {}) }}
+      >
+        {copied ? "✓ Copied" : "Copy QR code"}
+      </button>
+      <button type="button" onClick={download} style={S.qrDownloadBtn}>
+        Download PNG
+      </button>
     </div>
   );
 }
