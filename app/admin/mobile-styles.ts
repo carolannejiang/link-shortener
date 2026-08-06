@@ -38,7 +38,10 @@ export const M: Record<string, CSSProperties> = {
     border: "1px solid var(--danger)",
     borderRadius: 8,
   },
-  composer: { display: "grid", gap: 10 },
+  // Pin the single column to the container width; a bare auto grid column
+  // sizes to its content (the slug prefix + inputs) and can overflow the
+  // screen's right edge on narrow phones, thinning the boxes' right margin.
+  composer: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 },
   input: {
     width: "100%",
     minHeight: 52,

@@ -137,7 +137,10 @@ export const S: Record<string, CSSProperties> = {
     margin: "0 0 14px",
   },
   sideTitle: { fontSize: "1.15rem", fontWeight: 600, margin: 0 },
-  createForm: { display: "grid", gap: 10 },
+  // minmax(0, 1fr) pins the single column to the sidebar width; without it the
+  // implicit grid column sizes to its content (the long slug prefix + inputs)
+  // and overflows the sidebar's right edge, thinning the boxes' right margin.
+  createForm: { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10 },
   createInput: {
     width: "100%",
     padding: ".55rem .7rem",
