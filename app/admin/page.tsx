@@ -756,7 +756,7 @@ export default function Admin() {
               <input
                 type="text"
                 className="field"
-                placeholder="leave blank for random"
+                placeholder="random if blank"
                 value={slug}
                 onChange={(e) => {
                   setSlug(sanitizeSlug(e.target.value));
