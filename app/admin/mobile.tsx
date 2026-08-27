@@ -255,7 +255,12 @@ export function MobileDashboard(props: MobileDashboardProps) {
           onClose={() => setSheetFor(null)}
           onCopy={() => onCopy(sheetFor)}
           onDownloadQr={() => saveQr(sheetFor)}
-          onToggle={() => props.onToggle(sheetFor, !links[sheetFor].disabled)}
+          onToggle={() =>
+            props.onToggle(
+              sheetFor,
+              !(links[sheetFor].disabled || hasExpired(links[sheetFor])),
+            )
+          }
           onSaveNote={(note) => props.onSaveNote(sheetFor, note)}
           onSaveUrl={(u2) => props.onSaveUrl(sheetFor, u2)}
           onDelete={async () => {
@@ -372,8 +377,9 @@ function DetailsSheet({
   const [urlDraft, setUrlDraft] = useState(u.url);
   const [noteDraft, setNoteDraft] = useState(u.note);
 
-  const off = u.disabled;
-  const offSince = u.disabledAt;
+  const expired = hasExpired(u);
+  const off = u.disabled || expired;
+  const offSince = u.disabledAt || (expired ? u.expiresAt : 0);
   const all = hits ?? [];
   const recent = all.filter((h) => !h.denied);
   // Visits while off: denied hits since the link was turned off. Links

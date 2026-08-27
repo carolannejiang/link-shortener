@@ -5,6 +5,7 @@ import {
   isExpired,
   parseTags,
   parseParams,
+  isCountedHit,
   MAX_TAGS,
   SLUG_RE,
   RESERVED,
@@ -131,6 +132,25 @@ describe("parseParams", () => {
 
   it("url-encodes values so the result is a safe query string", () => {
     expect(parseParams("q=a b&t=x/y")).toBe("q=a+b&t=x%2Fy");
+  });
+});
+
+describe("isCountedHit", () => {
+  const hit = {
+    t: 1,
+    src: "direct" as const,
+    device: "desktop",
+    os: "macOS",
+    browser: "Safari",
+  };
+
+  it("counts successful human visits", () => {
+    expect(isCountedHit(hit)).toBe(true);
+  });
+
+  it("keeps bots and denied visits out of click analytics", () => {
+    expect(isCountedHit({ ...hit, device: "bot" })).toBe(false);
+    expect(isCountedHit({ ...hit, denied: true })).toBe(false);
   });
 });
 

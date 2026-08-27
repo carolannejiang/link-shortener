@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
+import {
+  isCountedHit,
+  type HitEvent as Hit,
+  type LinkInfo,
+} from "@/lib/links";
 import { M } from "./mobile-styles";
 
 // ─── Visit formatting, shared with the details sheet in mobile.tsx ──────────
@@ -295,7 +299,7 @@ export function VisitsScreen({
         <div style={M.vEmpty}>No visits recorded yet.</div>
       ) : (
         <div style={M.vScroll}>
-          <ChartCard hits={filtered.filter((h) => !h.denied)} />
+          <ChartCard hits={filtered.filter(isCountedHit)} />
           {rows.length > 0 ? (
             rows
           ) : (

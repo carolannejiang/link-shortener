@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { HitEvent as Hit } from "@/lib/links";
+import { isCountedHit, type HitEvent as Hit } from "@/lib/links";
 import {
   browserName,
   deviceName,
@@ -272,9 +272,9 @@ export function StatsCard({
   } else if (hits.length === 0) {
     body = <p style={S.statsMsg}>No visits recorded yet.</p>;
   } else {
-    // Denied visits (link was off — the visitor saw a 404) aren't clicks, so
-    // they stay out of the chart and counts; the visit rows still show them.
-    const counted = hits.filter((h) => !h.denied);
+    // Bots and denied visits aren't successful human clicks, so they stay out
+    // of the chart and counts; the event-log rows still show them.
+    const counted = hits.filter(isCountedHit);
     const days =
       range === "week" ? 7 : range === "month" ? 30 : spanDays(counted);
     const windowStart = new Date();
@@ -284,7 +284,8 @@ export function StatsCard({
     const scans = inWindow.filter((h) => h.src === "qr").length;
     const daily = dailyStats(counted, days);
 
-    const byDevice = (d: string) => hits.filter((h) => h.device === d).length;
+    const byDevice = (d: string) =>
+      counted.filter((h) => h.device === d).length;
 
     body = (
       <>

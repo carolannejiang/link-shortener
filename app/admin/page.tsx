@@ -426,6 +426,21 @@ export default function Admin() {
     setError("");
     setFormError("");
     setSavedSlug(null);
+
+    // Both responsive layouts use this function. Keep the collision guard here
+    // so the mobile composer cannot bypass the desktop form's local check and
+    // silently overwrite an existing destination through POST's update mode.
+    const problem = base.slug ? slugProblem(base.slug, links) : null;
+    if (problem) {
+      setSlugTaken(problem);
+      setFormError(
+        problem === "reserved"
+          ? `“${base.slug}” is reserved and can't be used as a link name.`
+          : `/${base.slug} is already in use — edit that link or pick another name.`,
+      );
+      return;
+    }
+
     setBusy(true);
     try {
       const data = await api("POST", base);
@@ -546,7 +561,13 @@ export default function Admin() {
     setError("");
     setBusy(true);
     try {
-      await api("PATCH", { slug: s, disabled });
+      const expired = isExpired(links[s]?.expiresAt ?? 0, Date.now());
+      const clearExpiry = !disabled && expired;
+      await api("PATCH", {
+        slug: s,
+        disabled,
+        ...(clearExpiry ? { expiresAt: 0 } : {}),
+      });
       setLinks((prev) => ({
         ...prev,
         [s]: {
@@ -555,6 +576,9 @@ export default function Admin() {
           // Mirror the server's stamp: set on disable (keeping an existing
           // one), cleared on enable.
           disabledAt: disabled ? prev[s].disabledAt || Date.now() : 0,
+          // Turning an expired link back on must remove the elapsed cutoff;
+          // otherwise the proxy continues returning 404 after the UI says on.
+          expiresAt: clearExpiry ? 0 : prev[s].expiresAt,
         },
       }));
     } catch (err) {
@@ -632,8 +656,15 @@ export default function Admin() {
         entries={entries}
         url={url}
         slug={slug}
-        onUrl={setUrl}
-        onSlug={(v) => setSlug(sanitizeSlug(v))}
+        onUrl={(v) => {
+          setUrl(v);
+          setFormError("");
+        }}
+        onSlug={(v) => {
+          setSlug(sanitizeSlug(v));
+          setSlugTaken(null);
+          setFormError("");
+        }}
         sortBy={sortBy}
         sortOptions={Object.entries(SORTS)}
         onSort={(k) => changeSort(k as SortKey)}
@@ -1018,11 +1049,11 @@ export default function Admin() {
                       </button>
                     )}
                     <button
-                      onClick={() => toggleLink(selected, !current.disabled)}
+                      onClick={() => toggleLink(selected, !currentOff)}
                       disabled={busy}
                       style={S.btnSecondary}
                     >
-                      {current.disabled ? "Enable" : "Disable"}
+                      {currentOff ? "Enable" : "Disable"}
                     </button>
                     <button
                       onClick={() => setConfirmingDelete(true)}

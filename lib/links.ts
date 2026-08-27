@@ -80,6 +80,14 @@ export type HitEvent = {
   denied?: boolean;
 };
 
+// Whether an event contributes to click analytics. Bots and visits that hit an
+// off link remain in the event log, but neither is a successful human click.
+// Keeping this predicate shared prevents the desktop and mobile charts from
+// drifting away from the counters maintained by the proxy.
+export function isCountedHit(hit: HitEvent): boolean {
+  return !hit.denied && hit.device !== "bot";
+}
+
 // What the links API returns for each slug (GET /api/links).
 export type LinkInfo = {
   url: string;
