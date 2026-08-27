@@ -7,17 +7,27 @@ const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
 const token =
   process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 
-if (!url || !token) {
-  throw new Error(
+const missingCredentials = () =>
+  new Error(
     "Missing Redis credentials. Set KV_REST_API_URL + KV_REST_API_TOKEN " +
       "(or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN).",
   );
-}
 
 // Auto-pipelining batches commands issued in the same tick (e.g. under a
 // Promise.all) into one HTTP request — over the REST transport each command
 // would otherwise pay its own round trip.
-export const redis = new Redis({ url, token, enableAutoPipelining: true });
+// Route modules are evaluated while Next.js collects build metadata. Delay the
+// configuration error until a request actually touches Redis so a new Vercel
+// project can complete its first build before its Marketplace database is
+// connected. Runtime requests still fail immediately with the useful message.
+export const redis: Redis =
+  url && token
+    ? new Redis({ url, token, enableAutoPipelining: true })
+    : new Proxy({} as Redis, {
+        get() {
+          throw missingCredentials();
+        },
+      });
 
 // Every link is one field in a single Redis hash: field = slug, value = URL.
 export const LINKS_KEY = "links";
@@ -77,6 +87,6 @@ export const eventsKey = (slug: string) => `events:${slug}`;
 // How many recent hits we keep per link.
 export const EVENTS_LIMIT = 500;
 
-// How many of those one stats request returns (newest first). The admin UI
-// shows a slice of these and uses the rest for its breakdowns.
-export const STATS_FETCH_LIMIT = 200;
+// Return the complete retained history. The dashboard renders a small visible
+// slice, while the full visits screen can paginate through every stored event.
+export const STATS_FETCH_LIMIT = EVENTS_LIMIT;

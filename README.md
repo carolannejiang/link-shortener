@@ -44,8 +44,8 @@ git push -u origin main
 
 ### 2. Import to Vercel
 Go to vercel.com/new, pick the repo, and click **Deploy**. The first deploy will
-succeed but the links won't work yet — it has no database and no password. Next
-two steps fix that.
+succeed, but the admin and short links won't work yet — the project has no
+database or password. The next two steps fix that.
 
 ### 3. Add the database
 In your new Vercel project: **Storage → Create / Connect Database → Redis**

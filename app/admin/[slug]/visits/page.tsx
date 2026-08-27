@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
+import {
+  isCountedHit,
+  type HitEvent as Hit,
+  type LinkInfo,
+} from "@/lib/links";
 import { dailyStats, DailyBars, VisitRow } from "../../stats-card";
 import { S } from "../../styles";
 
@@ -156,10 +160,7 @@ export default function VisitsPage() {
   const byDevice = (d: string) =>
     filtered.filter((h) => h.device === d).length;
 
-  const daily = dailyStats(
-    filtered.filter((h) => !h.denied),
-    CHART_DAYS,
-  );
+  const daily = dailyStats(filtered.filter(isCountedHit), CHART_DAYS);
 
   return (
     <main style={S.visPage}>
