@@ -251,6 +251,19 @@ export const S: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
   },
 
+  // ── Sidebar: standalone QR generator ──────────────────────────────────────
+  qrMaker: { marginTop: 12 },
+  qrMakerToggle: {
+    padding: 0,
+    fontSize: ".8rem",
+    fontWeight: 600,
+    color: "var(--muted)",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+  },
+  qrMakerBody: { display: "grid", gap: 10, marginTop: 10 },
+
   // ── Sidebar: links list ───────────────────────────────────────────────────
   listHead: {
     display: "flex",

@@ -9,6 +9,7 @@ import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
 import { isExpired, RESERVED } from "@/lib/links";
 import { MobileDashboard } from "./mobile";
 import { QrPanel } from "./qr-block";
+import { QrMaker } from "./qr-maker";
 import { StatsCard } from "./stats-card";
 import { S } from "./styles";
 
@@ -864,6 +865,7 @@ export default function Admin() {
               </div>
             )}
           </form>
+          <QrMaker />
         </div>
 
         <div style={S.listHead}>
