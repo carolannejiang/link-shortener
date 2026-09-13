@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { SITE_HOST } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "carolanne.link",
+  title: SITE_HOST,
   robots: { index: false, follow: false }, // don't let search engines index it
 };
 

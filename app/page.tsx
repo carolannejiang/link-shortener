@@ -15,14 +15,7 @@ export default function Home() {
       }}
     >
       <p style={{ color: "var(--muted)", textAlign: "center", maxWidth: "28rem" }}>
-        There is nothing here. If you were looking for a link, contact{" "}
-        <a
-          href="https://carolannejiang.com"
-          style={{ color: "var(--link)", textDecoration: "none" }}
-        >
-          Carolanne
-        </a>
-        .
+        There is nothing here.
       </p>
     </main>
   );

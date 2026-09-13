@@ -16,14 +16,7 @@ export default function NotFound() {
     >
       <p style={{ color: "var(--muted)", textAlign: "center", maxWidth: "28rem" }}>
         There is no link here. If one brought you to this page, it may have
-        moved or been switched off — contact{" "}
-        <a
-          href="https://carolannejiang.com"
-          style={{ color: "var(--link)", textDecoration: "none" }}
-        >
-          Carolanne
-        </a>
-        .
+        moved or been switched off.
       </p>
     </main>
   );

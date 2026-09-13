@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
+import { SITE_HOST } from "@/lib/site";
 import { S } from "./styles";
 
 // Pixel size of the PNG that Copy / Download produce — print resolution, per
@@ -9,10 +10,10 @@ import { S } from "./styles";
 const QR_EXPORT_SIZE = 1024;
 
 // The full origin (scheme + host) used to build absolute QR-code URLs.
-// Falls back to the production domain during prerendering.
+// Falls back to the configured site host during prerendering.
 function shortOrigin() {
   if (typeof window !== "undefined") return window.location.origin;
-  return "https://carolanne.link";
+  return `https://${SITE_HOST}`;
 }
 
 // The value a link's QR code encodes: the absolute short URL, tagged with
