@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 import type { AuthenticatorTransportFuture } from "@simplewebauthn/server";
 import { redis } from "@/lib/redis";
+import { SITE_HOST } from "@/lib/site";
 
 // --- Relying Party (this site) -------------------------------------------
 
@@ -23,7 +24,7 @@ export function relyingParty(req: NextRequest): {
   return { rpID, origin };
 }
 
-export const RP_NAME = "carolanne.link";
+export const RP_NAME = SITE_HOST;
 
 // --- Stored credentials ---------------------------------------------------
 

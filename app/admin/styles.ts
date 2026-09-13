@@ -216,7 +216,7 @@ export const S: Record<string, CSSProperties> = {
     cursor: "not-allowed",
   },
   formError: { fontSize: ".78rem", color: "var(--danger)" },
-  // Green "Saved — carolanne.link/x7kq2" confirmation under the form.
+  // Green "Saved — example.com/x7kq2" confirmation under the form.
   banner: {
     display: "flex",
     alignItems: "center",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { SITE_HOST } from "@/lib/site";
 import {
   isCountedHit,
   type HitEvent as Hit,
@@ -30,11 +31,11 @@ function matchesFilter(h: Hit, f: FilterKey): boolean {
   return true;
 }
 
-// The short-link domain for display. Falls back to the production domain
+// The short-link domain for display. Falls back to the configured site host
 // during prerendering (the page only shows data after a client fetch anyway).
 function shortHost() {
   if (typeof window !== "undefined") return window.location.host;
-  return "carolanne.link";
+  return SITE_HOST;
 }
 
 // The full visit history for one link: source filter + daily chart + a

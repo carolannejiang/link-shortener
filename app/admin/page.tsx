@@ -7,6 +7,7 @@ import {
 } from "@simplewebauthn/browser";
 import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
 import { isExpired, RESERVED } from "@/lib/links";
+import { SITE_HOST } from "@/lib/site";
 import { MobileDashboard } from "./mobile";
 import { QrPanel } from "./qr-block";
 import { QrMaker } from "./qr-maker";
@@ -65,11 +66,11 @@ function useIsMobile(): boolean {
   );
 }
 
-// The short-link domain, used only to render previews like carolanne.link/career.
-// Falls back to the production domain during prerendering.
+// The short-link domain, used only to render previews like example.com/career.
+// Falls back to the configured site host during prerendering.
 function shortHost() {
   if (typeof window !== "undefined") return window.location.host;
-  return "carolanne.link";
+  return SITE_HOST;
 }
 
 // The destination as displayed: scheme and trailing slash stripped; the
@@ -691,7 +692,7 @@ export default function Admin() {
       <main style={S.page}>
         <div style={S.cardNarrow}>
           <div style={S.header}>
-            <h1 style={S.h1}>carolanne.link</h1>
+            <h1 style={S.h1}>{SITE_HOST}</h1>
           </div>
 
           {info && (

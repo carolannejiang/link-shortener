@@ -1,9 +1,19 @@
-# carolanne.link — a private link shortener
+# link-shortener — a private link shortener you host yourself
 
 A tiny Next.js app that turns long URLs into short ones under your own domain
-(e.g. `carolanne.link/career`). One locked admin page lets you add links from
+(e.g. `yourname.link/career`). One locked admin page lets you add links from
 any browser; new links work the instant you save them. Each link gets a QR
 code, click/scan analytics, a private note, and an on/off switch.
+
+It is single-user by design: one password (or passkey), one domain, one
+Redis database, and it runs on Vercel's free tier. To get your own, use the
+**Deploy** button below or follow the manual steps.
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcarolannejiang%2Flink-shortener&project-name=link-shortener&repository-name=link-shortener&env=ADMIN_PASSWORD,NEXT_PUBLIC_SITE_HOST&envDescription=ADMIN_PASSWORD%3A%20a%20long%20password%20for%20the%20admin%20page.%20NEXT_PUBLIC_SITE_HOST%3A%20your%20short-link%20domain%2C%20e.g.%20yourname.link&stores=%5B%7B%22type%22%3A%22integration%22%2C%22integrationSlug%22%3A%22upstash%22%2C%22productSlug%22%3A%22upstash-redis%22%7D%5D)
+
+The button copies this repo into your GitHub account, asks for the two
+settings, and attaches an Upstash Redis database. After it finishes, jump to
+[step 6](#6-point-the-domain-at-it) to add your domain.
 
 ## How it works (the whole thing in five pieces)
 
@@ -25,13 +35,14 @@ code, click/scan analytics, a private note, and an on/off switch.
 Nothing here is edge-magic: the slug → URL map is a single Redis hash called
 `links`, and every link is just one field in it.
 
-## Deploy it (about 15 minutes)
+## Deploy it by hand (about 15 minutes)
 
 You need a [Vercel](https://vercel.com) account, a GitHub account (Vercel deploys
-from a Git repo), and your domain `carolanne.link`.
+from a Git repo), and a domain you own (the examples below use `yourname.link`).
 
 ### 1. Put the code on GitHub
-Create a new empty repo on GitHub, then from this folder:
+Click **Use this template** on GitHub (or fork), or create a new empty repo and
+push a copy from this folder:
 
 ```bash
 git init
@@ -54,31 +65,35 @@ it to this project. Vercel automatically adds the connection variables
 (`KV_REST_API_URL` and `KV_REST_API_TOKEN`, or the `UPSTASH_REDIS_REST_*`
 versions — the code accepts either).
 
-### 4. Add your admin password
+### 4. Add your password and domain name
 **Settings → Environment Variables → Add:**
 
 | Name | Value |
 | --- | --- |
 | `ADMIN_PASSWORD` | a long password you choose |
+| `NEXT_PUBLIC_SITE_HOST` | your short-link domain, e.g. `yourname.link` (no `https://`) |
+
+The second one is only cosmetic — it's the page title and the admin header.
+Redirects work on whatever domain you attach in step 6 regardless.
 
 ### 5. Redeploy
 **Deployments → ⋯ on the latest one → Redeploy.** Environment variables only
 take effect on a fresh deploy, so this step matters.
 
 ### 6. Point the domain at it
-**Settings → Domains → Add `carolanne.link`.** Vercel shows you the exact DNS
+**Settings → Domains → Add `yourname.link`.** Vercel shows you the exact DNS
 records (or nameservers) to set at whoever you bought the domain from. Once DNS
 propagates, Vercel issues the HTTPS certificate automatically.
 
 ### 7. Use it
-Visit `https://carolanne.link/admin`, enter your password, and create a link —
-slug `career`, destination your long URL. Then open `carolanne.link/career`. Done.
+Visit `https://yourname.link/admin`, enter your password, and create a link —
+slug `career`, destination your long URL. Then open `yourname.link/career`. Done.
 
 ## Running it on your own computer (optional)
 
 ```bash
 npm install
-cp .env.local.example .env.local      # then fill in the 3 values (see below)
+cp .env.local.example .env.local      # then fill in the values (see below)
 node scripts/local-redis.mjs          # terminal 1: throwaway in-memory Redis
 npm run dev                           # terminal 2: open http://localhost:3000/admin
 ```
@@ -113,7 +128,7 @@ GitHub Actions runs all three plus `next build` on every push and PR.
   `/Career` still land on `/career` — lookups are case-insensitive.
 - **Redirects are temporary (HTTP 307) on purpose.** That way, if you ever
   repoint `/career` somewhere new, browsers won't keep using a cached old target.
-- **Query params are forwarded.** `carolanne.link/career?utm_source=x` passes
+- **Query params are forwarded.** `yourname.link/career?utm_source=x` passes
   `utm_source=x` through to the destination (the internal `src=qr` marker is
   stripped).
 - **Click counts mean humans.** Link-preview bots (iMessage, Slack, and other
@@ -126,3 +141,7 @@ GitHub Actions runs all three plus `next build` on every push and PR.
   require Touch ID / Face ID / PIN — not just possession of the device.
 - The password is still the root of trust. Make `ADMIN_PASSWORD` long, and if
   you ever think it leaked, change it in Vercel and redeploy.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

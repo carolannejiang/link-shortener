@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import type { HitEvent as Hit, LinkInfo } from "@/lib/links";
 import { isExpired } from "@/lib/links";
+import { SITE_HOST } from "@/lib/site";
 import { qrValue } from "./qr-block";
 import { M } from "./mobile-styles";
 import {
@@ -159,9 +160,9 @@ export function MobileDashboard(props: MobileDashboardProps) {
     <main style={M.wrap}>
       <div style={M.head}>
         <div style={M.headRow}>
-          {/* Brand title, hardcoded like the desktop header (the slug prefix
+          {/* Brand title, same as the desktop header (the slug prefix
               below shows the real host). */}
-          <h1 style={M.h1}>carolanne.link</h1>
+          <h1 style={M.h1}>{SITE_HOST}</h1>
           <button type="button" onClick={onLogout} disabled={busy} style={M.logout}>
             Log out
           </button>
